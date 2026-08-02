@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tutorial",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "meta": true,
+    "env": true,
+    "base": {
+      "$ref": "#/$defs/Base"
+    },
+    "harness": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Harness"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Step"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "title",
+    "base",
+    "steps"
+  ],
+  "$defs": {
+    "Base": {
+      "type": "object",
+      "properties": {
+        "fixture": {
+          "description": "vendored scaffold dir, relative to the tutorial dir (v0: required)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "setup": {
+          "description": "re-scaffolding commands — parsed but not implemented in v0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Harness": {
+      "type": "object",
+      "properties": {
+        "prelude": {
+          "description": "verbatim Rust included in generated tests (e.g. a copy of an app command)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handlers": {
+          "description": "names passed to tauri::generate_handler![]",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "plugins": {
+          "description": "plugin crates registered on the mock builder (`<name>::init()`)",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Step": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "task": {
+          "description": "natural-language instruction — doubles as the agent-eval prompt",
+          "type": "string"
+        },
+        "harness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Harness"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assertion"
+          }
+        },
+        "mutations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Mutation"
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Assertion"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "task"
+      ]
+    },
+    "Assertion": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/AssertionKind"
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "args": true,
+        "expect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expect"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "setup": {
+          "description": "verbatim Rust inserted before the invoke in the generated test",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platforms": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ]
+    },
+    "AssertionKind": {
+      "type": "string",
+      "enum": [
+        "ipc-local",
+        "ipc-acl",
+        "cargo-test",
+        "shell",
+        "build",
+        "e2e"
+      ]
+    },
+    "Expect": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExpectKeyword"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": true
+          },
+          "required": [
+            "ok"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok_contains": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "ok_contains"
+          ]
+        }
+      ]
+    },
+    "ExpectKeyword": {
+      "type": "string",
+      "enum": [
+        "denied"
+      ]
+    },
+    "Mutation": {
+      "oneOf": [
+        {
+          "description": "copy steps/<step-id>/** over the work tree",
+          "type": "object",
+          "properties": {
+            "engine": {
+              "type": "string",
+              "const": "overlay"
+            }
+          },
+          "required": [
+            "engine"
+          ]
+        },
+        {
+          "description": "deep-merge into a JSON file (objects recurse, arrays union)",
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "merge": true,
+            "engine": {
+              "type": "string",
+              "const": "json-merge"
+            }
+          },
+          "required": [
+            "engine",
+            "file",
+            "merge"
+          ]
+        },
+        {
+          "description": "run a command in the work tree",
+          "type": "object",
+          "properties": {
+            "run": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "engine": {
+              "type": "string",
+              "const": "shell"
+            }
+          },
+          "required": [
+            "engine",
+            "run"
+          ]
+        }
+      ]
+    }
+  }
+}

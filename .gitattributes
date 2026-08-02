@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
-* text=auto
+* text=auto eol=lf
+# golden fixtures are byte-exact regression baselines
+tests/fixtures/** -text

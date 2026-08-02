@@ -6,6 +6,7 @@ assertions; one YAML file compiles into a readable tutorial, a generatable templ
 and a CI gate that fails when Tauri moves under the docs.
 
 Status: v0, one pilot tutorial (`tutorials/greet-command`). Not published.
+The CLI core is Rust; the original JS implementation lives in the git history.
 
 ## Why
 
@@ -16,10 +17,12 @@ first to find out. A tutorial that runs is a tutorial that can't silently rot.
 ## Usage
 
 ```
-pnpm install
-node bin/tatu.js check tutorials/greet-command    # advisory run on your machine
-node bin/tatu.js validate tutorials/greet-command # parse + validate only
+cargo run -q -- check tutorials/greet-command    # advisory run on your machine
+cargo run -q -- validate tutorials/greet-command # parse + validate only
+cargo run -q -- schema                           # regenerate schemas/*.json
 ```
+
+Or `cargo install --path .` and use `tatu` directly.
 
 `tatu check` restores the tutorial's vendored base scaffold into `.tatu/work/`,
 applies each step's mutations, generates one Rust integration test per assertion

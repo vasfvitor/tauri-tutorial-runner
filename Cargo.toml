@@ -1,0 +1,25 @@
+[package]
+name = "tauri-tutorial-runner"
+version = "0.1.0"
+description = "Executable, verifiable tutorials for Tauri apps: one YAML compiles to a readable tutorial, a template, and a CI gate."
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[[bin]]
+name = "tatu"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# maintained serde_yaml fork (upstream archived); revisit serde-saphyr when it matures
+serde_norway = "0.9"
+schemars = "1"
+similar = "2"
+walkdir = "2"
+log = "0.4"
+env_logger = "0.11"
+colored = "3"
