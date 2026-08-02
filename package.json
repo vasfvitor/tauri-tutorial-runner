@@ -1,0 +1,17 @@
+{
+  "name": "tauri-tutorial-runner",
+  "version": "0.0.0",
+  "description": "Executable, verifiable tutorials for Tauri apps: one YAML compiles to a readable tutorial, a template, and a CI gate.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "bin": {
+    "tatu": "./bin/tatu.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0"
+  }
+}
