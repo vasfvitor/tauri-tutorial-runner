@@ -1,0 +1,54 @@
+name: tutorials
+
+# The authoritative gate: every tutorial runs in the pinned container; a red
+# step means the tutorial (or Tauri underneath it) broke. Scheduled so drift
+# is caught without anyone pushing.
+#
+# TODO(blocked until tauri-docs commits these manifests): compare each fresh
+# manifest against the copy committed in tauri-docs and open a PR when they
+# diverge.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+
+jobs:
+  greet-command:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            target
+            .tatu/cargo-target
+            .tatu/cargo-home
+          key: tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}
+
+      - name: Build runner image
+        run: docker build -t tatu-runner .
+
+      - name: Run tutorial (authoritative)
+        run: |
+          docker run --rm -v "$PWD:/work" -e CARGO_HOME=/work/.tatu/cargo-home tatu-runner \
+            cargo run --release -- run tutorials/greet-command
+
+      - name: Manifest matches expected (platform-independent fields)
+        run: |
+          node -e '
+            const fs = require("fs");
+            const norm = (p) => { const m = JSON.parse(fs.readFileSync(p, "utf8")); delete m.advisory; delete m.platform; return JSON.stringify(m, null, 2); };
+            const fresh = norm(".tatu/out/greet-command/tutorial.manifest.json");
+            const expected = norm("tutorials/greet-command/expected.manifest.json");
+            if (fresh !== expected) { console.error("manifest drifted from expected"); process.exit(1); }
+            console.log("manifest matches expected");
+          '
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tutorial-manifests
+          path: .tatu/out/**/tutorial.manifest.json

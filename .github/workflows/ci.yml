@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # includes tests/golden.rs — the byte-compat gate for generated test
+      # templates; it only renders strings, no tauri compilation involved
+      - run: cargo test
+      # committed schemas must match the code they're generated from
+      - run: |
+          cargo run -q -- schema --out /tmp/schemas
+          diff -r schemas /tmp/schemas
