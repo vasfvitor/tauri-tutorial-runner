@@ -8,7 +8,9 @@ use crate::error::{Error, Result};
 use crate::harness::{apply_harness, generate_ipc_test_file, sanitize, IpcCase};
 use crate::helpers;
 use crate::manifest::{platform, Manifest, MutationRecord, ResultRecord, Status, StepRecord};
-use crate::mutations::{apply_json_merge, apply_overlay, apply_shell, shell_command};
+use crate::mutations::{
+  apply_json_merge, apply_overlay, apply_shell, overlay_reverted_lines, shell_command,
+};
 use crate::tutorial::{Assertion, AssertionKind, Mutation, Step, Tutorial};
 
 pub struct RunOptions {
@@ -47,6 +49,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
   };
 
   let mut failed = false;
+  let recorded_diffs = load_recorded_diffs(&tutorial.dir)?;
 
   for step in &tutorial.steps {
     if let Some(only) = &options.only_step {
@@ -74,7 +77,11 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
     for mutation in &step.mutations {
       let applied: Vec<MutationRecord> = match mutation {
-        Mutation::Overlay {} => apply_overlay(tutorial, &step.id, &work_dir)?,
+        Mutation::Overlay {} => {
+          let applied = apply_overlay(tutorial, &step.id, &work_dir)?;
+          check_overlay_reverts(&recorded_diffs, &step.id, &applied)?;
+          applied
+        }
         Mutation::JsonMerge { file, merge } => apply_json_merge(file, merge, &work_dir)?,
         Mutation::Shell { run, cwd } => apply_shell(run, cwd.as_deref(), &work_dir)?,
       };
@@ -134,6 +141,55 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
   if failed {
     return Err(Error::Runner("tutorial failed — see output above".into()));
+  }
+  Ok(())
+}
+
+// (step id, file) → recorded diff from the committed expected manifest; empty
+// map when the tutorial has none yet (first authoring run)
+type RecordedDiffs = std::collections::HashMap<(String, String), String>;
+
+fn load_recorded_diffs(tutorial_dir: &Path) -> Result<RecordedDiffs> {
+  let path = tutorial_dir.join("expected.manifest.json");
+  let mut map = RecordedDiffs::new();
+  if !path.exists() {
+    return Ok(map);
+  }
+  let expected: Manifest = serde_json::from_str(&fs::read_to_string(&path)?)
+    .map_err(|e| Error::Runner(format!("unreadable {}: {e}", path.display())))?;
+  for step in expected.steps {
+    for mutation in step.mutations {
+      if let (Some(file), Some(diff)) = (mutation.file, mutation.diff) {
+        map.insert((step.id.clone(), file), diff);
+      }
+    }
+  }
+  Ok(map)
+}
+
+// the re-vendor guard: hard-fail before assertions ever run if an overlay
+// would silently revert base content the recorded tutorial diff never removed
+// (a recurring docs failure: a guide written against an older scaffold
+// quietly undoes what the newer scaffold added)
+fn check_overlay_reverts(
+  recorded: &RecordedDiffs,
+  step_id: &str,
+  applied: &[MutationRecord],
+) -> Result<()> {
+  for record in applied {
+    let (Some(file), Some(fresh)) = (&record.file, &record.diff) else {
+      continue;
+    };
+    let Some(recorded_diff) = recorded.get(&(step_id.to_string(), file.clone())) else {
+      continue; // new overlay file — no recorded diff to protect yet
+    };
+    let reverted = overlay_reverted_lines(recorded_diff, fresh);
+    if !reverted.is_empty() {
+      return Err(Error::Runner(format!(
+        "re-vendor guard: overlay steps/{step_id}/{file} would revert base lines the recorded tutorial diff never removed:\n  -{}\nthe base changed under this overlay — re-sync the overlay with the new base, then regenerate expected.manifest.json",
+        reverted.join("\n  -")
+      )));
+    }
   }
   Ok(())
 }

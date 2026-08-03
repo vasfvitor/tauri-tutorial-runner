@@ -129,6 +129,34 @@ fn deep_merge(base: serde_json::Value, patch: &serde_json::Value) -> serde_json:
   }
 }
 
+// Re-vendor guard: an overlay wholesale-replaces its base
+// file, so base lines the recorded tutorial diff never removed must survive.
+// Returns the base lines the fresh diff removes beyond the recorded one —
+// non-empty means the base changed under the overlay and applying it would
+// silently revert scaffold content the tutorial never discusses.
+pub fn overlay_reverted_lines(recorded: &str, fresh: &str) -> Vec<String> {
+  fn removed_counts(diff: &str) -> std::collections::HashMap<&str, u32> {
+    let mut counts = std::collections::HashMap::new();
+    for line in diff.lines() {
+      if line.starts_with("---") {
+        continue;
+      }
+      if let Some(rest) = line.strip_prefix('-') {
+        *counts.entry(rest).or_default() += 1;
+      }
+    }
+    counts
+  }
+  let recorded = removed_counts(recorded);
+  let mut offending: Vec<String> = removed_counts(fresh)
+    .into_iter()
+    .filter(|(line, n)| *n > recorded.get(line).copied().unwrap_or(0))
+    .map(|(line, _)| line.to_string())
+    .collect();
+  offending.sort();
+  offending
+}
+
 fn unified_diff(before: Option<&str>, after: &str, label: &str) -> String {
   match before {
     None => format!(
@@ -144,5 +172,38 @@ fn unified_diff(before: Option<&str>, after: &str, label: &str) -> String {
         .header(&format!("a/{label}"), &format!("b/{label}"))
         .to_string()
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::overlay_reverted_lines;
+
+  const RECORDED: &str = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+new_line\n+added_line\n context2\n";
+
+  #[test]
+  fn identical_diff_passes() {
+    assert!(overlay_reverted_lines(RECORDED, RECORDED).is_empty());
+  }
+
+  #[test]
+  fn extra_removal_is_flagged() {
+    let fresh = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n context\n-old_line\n-upstream_new_line\n+new_line\n context2\n";
+    assert_eq!(
+      overlay_reverted_lines(RECORDED, fresh),
+      vec!["upstream_new_line".to_string()]
+    );
+  }
+
+  #[test]
+  fn changed_additions_alone_pass() {
+    // tutorial author edited what the overlay adds — not a revert
+    let fresh = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+different_new_line\n context2\n";
+    assert!(overlay_reverted_lines(RECORDED, fresh).is_empty());
+  }
+
+  #[test]
+  fn header_minus_lines_ignored() {
+    assert!(overlay_reverted_lines("", "--- a/x\n+++ b/x\n").is_empty());
   }
 }
