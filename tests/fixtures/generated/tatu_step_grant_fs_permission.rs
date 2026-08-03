@@ -35,7 +35,10 @@ fn step_0_plugin_fs_read_text_file() {
             cmd: "plugin:fs|read_text_file".into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            // the webview's own URL (devUrl under `cargo test`) — the one origin
+            // that is Origin::Local on every platform; a hardcoded
+            // http://tauri.localhost is remote (= fully ACL-denied) off Windows
+            url: webview.url().unwrap(),
             body: InvokeBody::Json(serde_json::from_str(r#"{"path":"data.json","options":{"baseDir":14}}"#).unwrap()),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),

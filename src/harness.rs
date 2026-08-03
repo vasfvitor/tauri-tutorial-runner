@@ -166,7 +166,10 @@ fn {fn_name}() {{
             cmd: {command}.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            // the webview's own URL (devUrl under `cargo test`) — the one origin
+            // that is Origin::Local on every platform; a hardcoded
+            // http://tauri.localhost is remote (= fully ACL-denied) off Windows
+            url: webview.url().unwrap(),
             body: InvokeBody::Json(serde_json::from_str(r#{args_open}{args}{args_close}#).unwrap()),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_string(),
