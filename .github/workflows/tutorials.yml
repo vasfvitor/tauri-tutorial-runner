@@ -26,7 +26,12 @@ jobs:
             target
             .tatu/cargo-target
             .tatu/cargo-home
-          key: tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}
+          # unique key so every run saves (an exact hit skips the save, losing
+          # whatever the tutorial compiled this time); restore picks the newest prefix match
+          key: tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}-
+            tutorials-${{ runner.os }}-
 
       - name: Build runner image
         timeout-minutes: 10

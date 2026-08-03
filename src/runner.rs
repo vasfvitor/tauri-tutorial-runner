@@ -204,7 +204,12 @@ fn run_assertion_phase(
     if outcome.ok {
       println!("   {test_name}: {} ({}s)", "pass".green(), outcome.seconds);
     } else {
-      println!("{}", helpers::last_lines(&outcome.output, 40, "   | "));
+      // the panic lives in the test harness's stdout; cargo's stderr is mostly
+      // compile noise — tail them separately so neither drowns the other
+      println!("   | --- test output (stdout)");
+      println!("{}", helpers::last_lines(&outcome.stdout, 40, "   | "));
+      println!("   | --- cargo (stderr)");
+      println!("{}", helpers::last_lines(&outcome.stderr, 15, "   | "));
     }
   }
 
@@ -233,7 +238,8 @@ fn run_assertion_phase(
 
 struct TestOutcome {
   ok: bool,
-  output: String,
+  stdout: String,
+  stderr: String,
   seconds: u64,
 }
 
@@ -246,11 +252,8 @@ fn cargo_test(work_dir: &Path, target_dir: &Path, test_name: &str) -> Result<Tes
     .output()?;
   Ok(TestOutcome {
     ok: output.status.success(),
-    output: format!(
-      "{}\n{}",
-      String::from_utf8_lossy(&output.stdout),
-      String::from_utf8_lossy(&output.stderr)
-    ),
+    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     seconds: started.elapsed().as_secs(),
   })
 }
