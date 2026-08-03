@@ -29,9 +29,11 @@ jobs:
           key: tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}
 
       - name: Build runner image
+        timeout-minutes: 10
         run: docker build -t tatu-runner .
 
       - name: Run tutorial (authoritative)
+        timeout-minutes: 45
         run: |
           docker run --rm -v "$PWD:/work" -e CARGO_HOME=/work/.tatu/cargo-home tatu-runner \
             cargo run --release -- run tutorials/greet-command
