@@ -14,13 +14,17 @@ on:
     - cron: '17 5 * * 1'
 
 jobs:
-  greet-command:
+  run:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        tutorial: [greet-command, rsbuild]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             target
@@ -28,10 +32,10 @@ jobs:
             .tatu/cargo-home
           # unique key so every run saves (an exact hit skips the save, losing
           # whatever the tutorial compiled this time); restore picks the newest prefix match
-          key: tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}-${{ github.run_id }}
+          key: tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', format('tutorials/{0}/base/src-tauri/Cargo.lock', matrix.tutorial)) }}-${{ github.run_id }}
           restore-keys: |
-            tutorials-${{ runner.os }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'tutorials/greet-command/base/src-tauri/Cargo.lock') }}-
-            tutorials-${{ runner.os }}-
+            tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', format('tutorials/{0}/base/src-tauri/Cargo.lock', matrix.tutorial)) }}-
+            tutorials-${{ matrix.tutorial }}-
 
       - name: Build runner image
         timeout-minutes: 10
@@ -41,21 +45,21 @@ jobs:
         timeout-minutes: 45
         run: |
           docker run --rm -v "$PWD:/work" -e CARGO_HOME=/work/.tatu/cargo-home tatu-runner \
-            cargo run --release -- run tutorials/greet-command
+            cargo run --release -- run "tutorials/${{ matrix.tutorial }}"
 
       - name: Manifest matches expected (platform-independent fields)
         run: |
           node -e '
             const fs = require("fs");
             const norm = (p) => { const m = JSON.parse(fs.readFileSync(p, "utf8")); delete m.advisory; delete m.platform; return JSON.stringify(m, null, 2); };
-            const fresh = norm(".tatu/out/greet-command/tutorial.manifest.json");
-            const expected = norm("tutorials/greet-command/expected.manifest.json");
+            const fresh = norm(".tatu/out/${{ matrix.tutorial }}/tutorial.manifest.json");
+            const expected = norm("tutorials/${{ matrix.tutorial }}/expected.manifest.json");
             if (fresh !== expected) { console.error("manifest drifted from expected"); process.exit(1); }
             console.log("manifest matches expected");
           '
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: tutorial-manifests
+          name: tutorial-manifests-${{ matrix.tutorial }}
           path: .tatu/out/**/tutorial.manifest.json

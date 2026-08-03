@@ -17,6 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Node + pnpm for frontend-build assertions (bundler tutorials); node 24
+# matches GitHub-hosted runners
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm@10 \
+    && rm -rf /var/lib/apt/lists/*
+
 # marks runs inside this image as authoritative
 ENV TATU_CONTAINER=1
 

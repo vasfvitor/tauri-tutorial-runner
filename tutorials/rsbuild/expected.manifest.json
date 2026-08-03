@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "rsbuild",
+  "title": "Use Rsbuild as the frontend build tool",
+  "steps": [
+    {
+      "id": "switch-to-rsbuild",
+      "task": "Replace Vite with Rsbuild: point the package.json scripts at rsbuild, swap the devDependency, and add rsbuild.config.ts. The scaffold keeps its entry in `src/main.ts` and its own `index.html`, so tell Rsbuild about both — and let it inject the bundle script instead of the hardcoded Vite tags.\n",
+      "mutations": [
+        {
+          "file": "index.html",
+          "diff": "--- a/index.html\n+++ b/index.html\n@@ -1,43 +1,41 @@\n-<!doctype html>\r\n-<html lang=\"en\">\r\n-  <head>\r\n-    <meta charset=\"UTF-8\" />\r\n-    <link rel=\"stylesheet\" href=\"/src/styles.css\" />\r\n-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\r\n-    <title>Tauri App</title>\r\n-    <script type=\"module\" src=\"/src/main.ts\" defer></script>\r\n-  </head>\r\n-\r\n-  <body>\r\n-    <main class=\"container\">\r\n-      <h1>Welcome to Tauri</h1>\r\n-\r\n-      <div class=\"row\">\r\n-        <a href=\"https://vite.dev\" target=\"_blank\">\r\n-          <img src=\"/src/assets/vite.svg\" class=\"logo vite\" alt=\"Vite logo\" />\r\n-        </a>\r\n-        <a href=\"https://tauri.app\" target=\"_blank\">\r\n-          <img\r\n-            src=\"/src/assets/tauri.svg\"\r\n-            class=\"logo tauri\"\r\n-            alt=\"Tauri logo\"\r\n-          />\r\n-        </a>\r\n-        <a href=\"https://www.typescriptlang.org/docs\" target=\"_blank\">\r\n-          <img\r\n-            src=\"/src/assets/typescript.svg\"\r\n-            class=\"logo typescript\"\r\n-            alt=\"typescript logo\"\r\n-          />\r\n-        </a>\r\n-      </div>\r\n-      <p>Click on the Tauri logo to learn more about the framework</p>\r\n-\r\n-      <form class=\"row\" id=\"greet-form\">\r\n-        <input id=\"greet-input\" placeholder=\"Enter a name...\" />\r\n-        <button type=\"submit\">Greet</button>\r\n-      </form>\r\n-      <p id=\"greet-msg\"></p>\r\n-    </main>\r\n-  </body>\r\n-</html>\r\n+<!doctype html>\n+<html lang=\"en\">\n+  <head>\n+    <meta charset=\"UTF-8\" />\n+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n+    <title>Tauri App</title>\n+  </head>\n+\n+  <body>\n+    <main class=\"container\">\n+      <h1>Welcome to Tauri</h1>\n+\n+      <div class=\"row\">\n+        <a href=\"https://vite.dev\" target=\"_blank\">\n+          <img src=\"/src/assets/vite.svg\" class=\"logo vite\" alt=\"Vite logo\" />\n+        </a>\n+        <a href=\"https://tauri.app\" target=\"_blank\">\n+          <img\n+            src=\"/src/assets/tauri.svg\"\n+            class=\"logo tauri\"\n+            alt=\"Tauri logo\"\n+          />\n+        </a>\n+        <a href=\"https://www.typescriptlang.org/docs\" target=\"_blank\">\n+          <img\n+            src=\"/src/assets/typescript.svg\"\n+            class=\"logo typescript\"\n+            alt=\"typescript logo\"\n+          />\n+        </a>\n+      </div>\n+      <p>Click on the Tauri logo to learn more about the framework</p>\n+\n+      <form class=\"row\" id=\"greet-form\">\n+        <input id=\"greet-input\" placeholder=\"Enter a name...\" />\n+        <button type=\"submit\">Greet</button>\n+      </form>\n+      <p id=\"greet-msg\"></p>\n+    </main>\n+  </body>\n+</html>\n"
+        },
+        {
+          "file": "package.json",
+          "diff": "--- a/package.json\n+++ b/package.json\n@@ -4,9 +4,9 @@\n   \"version\": \"0.1.0\",\n   \"type\": \"module\",\n   \"scripts\": {\n-    \"dev\": \"vite\",\n-    \"build\": \"tsc && vite build\",\n-    \"preview\": \"vite preview\",\n+    \"dev\": \"rsbuild dev\",\n+    \"build\": \"rsbuild build\",\n+    \"preview\": \"rsbuild preview\",\n     \"tauri\": \"tauri\"\n   },\n   \"dependencies\": {\n@@ -15,7 +15,7 @@\n   },\n   \"devDependencies\": {\n     \"@tauri-apps/cli\": \"^2\",\n-\t\t\"vite\": \"^8.0.16\",\n+    \"@rsbuild/core\": \"^1.6.12\",\n     \"typescript\": \"~6.0.3\"\n   }\n }\n"
+        },
+        {
+          "file": "rsbuild.config.ts",
+          "diff": "new file: rsbuild.config.ts\n+import { defineConfig } from \"@rsbuild/core\";\n+\n+const host = process.env.TAURI_DEV_HOST;\n+\n+// Docs: https://rsbuild.rs/config/\n+export default defineConfig({\n+  source: {\n+    // create-tauri-app keeps the entry in src/, not rsbuild's default location\n+    entry: { index: \"./src/main.ts\" },\n+  },\n+  html: {\n+    // reuse the scaffold's page; rsbuild injects the bundle script itself\n+    template: \"./index.html\",\n+  },\n+  server: {\n+    // Tauri expects a fixed port, fail if that port is not available\n+    strictPort: true,\n+    // if the host Tauri is expecting is set, use it\n+    host: host || undefined,\n+  },\n+  dev: {\n+    client: host\n+      ? {\n+          protocol: \"ws\",\n+          host,\n+          port: 1421,\n+        }\n+      : undefined,\n+  },\n+  output: {\n+    // don't minify for debug builds\n+    minify: !process.env.TAURI_ENV_DEBUG,\n+    // produce sourcemaps for debug builds\n+    sourceMap: !!process.env.TAURI_ENV_DEBUG,\n+  },\n+  tools: {\n+    rspack: {\n+      watchOptions: {\n+        // .git and node_modules are ignored by rsbuild by default\n+        // src-tauri usually does not contain frontend files so it's ignored here as well\n+        ignored: [\"**/.git\", \"**/node_modules\", \"**/src-tauri/**\"],\n+      },\n+    },\n+  },\n+});\n+"
+        },
+        {
+          "file": "src/main.ts",
+          "diff": "--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1,22 +1,23 @@\n-import { invoke } from \"@tauri-apps/api/core\";\r\n-\r\n-let greetInputEl: HTMLInputElement | null;\r\n-let greetMsgEl: HTMLElement | null;\r\n-\r\n-async function greet() {\r\n-  if (greetMsgEl && greetInputEl) {\r\n-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/\r\n-    greetMsgEl.textContent = await invoke(\"greet\", {\r\n-      name: greetInputEl.value,\r\n-    });\r\n-  }\r\n-}\r\n-\r\n-window.addEventListener(\"DOMContentLoaded\", () => {\r\n-  greetInputEl = document.querySelector(\"#greet-input\");\r\n-  greetMsgEl = document.querySelector(\"#greet-msg\");\r\n-  document.querySelector(\"#greet-form\")?.addEventListener(\"submit\", (e) => {\r\n-    e.preventDefault();\r\n-    greet();\r\n-  });\r\n-});\r\n+import { invoke } from \"@tauri-apps/api/core\";\n+import \"./styles.css\";\n+\n+let greetInputEl: HTMLInputElement | null;\n+let greetMsgEl: HTMLElement | null;\n+\n+async function greet() {\n+  if (greetMsgEl && greetInputEl) {\n+    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/\n+    greetMsgEl.textContent = await invoke(\"greet\", {\n+      name: greetInputEl.value,\n+    });\n+  }\n+}\n+\n+window.addEventListener(\"DOMContentLoaded\", () => {\n+  greetInputEl = document.querySelector(\"#greet-input\");\n+  greetMsgEl = document.querySelector(\"#greet-msg\");\n+  document.querySelector(\"#greet-form\")?.addEventListener(\"submit\", (e) => {\n+    e.preventDefault();\n+    greet();\n+  });\n+});\n"
+        }
+      ],
+      "preconditions": [],
+      "assertions": [
+        {
+          "kind": "shell",
+          "run": "pnpm install --no-frozen-lockfile && pnpm build",
+          "status": "pass"
+        },
+        {
+          "kind": "shell",
+          "run": "node -e \"process.exit(require('fs').existsSync('dist/index.html') ? 0 : 1)\"",
+          "status": "pass"
+        }
+      ]
+    },
+    {
+      "id": "wire-tauri-config",
+      "task": "Point Tauri at the Rsbuild dev server and hooks: `pnpm dev` / `pnpm build` as the before-commands, Rsbuild's default port 3000 as `devUrl`, and `../dist` as `frontendDist`. The app's IPC must keep working with the new configuration.\n",
+      "mutations": [
+        {
+          "file": "src-tauri/tauri.conf.json",
+          "diff": "--- a/src-tauri/tauri.conf.json\n+++ b/src-tauri/tauri.conf.json\n@@ -5,7 +5,7 @@\n   \"identifier\": \"com.tatu.rsbuild\",\n   \"build\": {\n     \"beforeDevCommand\": \"pnpm dev\",\n-    \"devUrl\": \"http://localhost:1420\",\n+    \"devUrl\": \"http://localhost:3000\",\n     \"beforeBuildCommand\": \"pnpm build\",\n     \"frontendDist\": \"../dist\"\n   },\n"
+        }
+      ],
+      "preconditions": [],
+      "assertions": [
+        {
+          "kind": "ipc-local",
+          "command": "greet",
+          "status": "pass"
+        }
+      ]
+    }
+  ]
+}

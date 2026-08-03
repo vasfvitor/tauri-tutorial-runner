@@ -1,0 +1,61 @@
+# tatu tutorial — schema v0
+# Starts from the vendored create-tauri-app scaffold (vite) and migrates it
+# to Rsbuild.
+id: rsbuild
+title: Use Rsbuild as the frontend build tool
+meta:
+  difficulty: beginner
+  time: 10min
+  platforms: [windows, macos, linux]
+
+env:
+  image: TODO-pin-once-published
+
+base:
+  # vendored create-tauri-app 4.7.3 vanilla-ts scaffold (pnpm), identifier com.tatu.rsbuild
+  fixture: base
+
+steps:
+  - id: switch-to-rsbuild
+    task: >
+      Replace Vite with Rsbuild: point the package.json scripts at rsbuild,
+      swap the devDependency, and add rsbuild.config.ts. The scaffold keeps
+      its entry in `src/main.ts` and its own `index.html`, so tell Rsbuild
+      about both — and let it inject the bundle script instead of the
+      hardcoded Vite tags.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: shell
+        run: pnpm install --no-frozen-lockfile && pnpm build
+      - kind: shell
+        # the build must actually produce the app page
+        run: 'node -e "process.exit(require(''fs'').existsSync(''dist/index.html'') ? 0 : 1)"'
+
+  - id: wire-tauri-config
+    task: >
+      Point Tauri at the Rsbuild dev server and hooks: `pnpm dev` /
+      `pnpm build` as the before-commands, Rsbuild's default port 3000 as
+      `devUrl`, and `../dist` as `frontendDist`. The app's IPC must keep
+      working with the new configuration.
+    mutations:
+      - engine: json-merge
+        file: src-tauri/tauri.conf.json
+        merge:
+          build:
+            beforeDevCommand: "pnpm dev"
+            beforeBuildCommand: "pnpm build"
+            devUrl: "http://localhost:3000"
+            frontendDist: "../dist"
+    harness:
+      prelude: |
+        #[tauri::command]
+        fn greet(name: &str) -> String {
+            format!("Hello, {}! You've been greeted from Rust!", name)
+        }
+      handlers: [greet]
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }

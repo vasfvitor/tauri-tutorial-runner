@@ -88,8 +88,11 @@ pub fn apply_shell(run: &str, cwd: Option<&str>, work_dir: &Path) -> Result<Vec<
 pub fn shell_command(run: &str) -> Command {
   #[cfg(windows)]
   {
+    use std::os::windows::process::CommandExt;
     let mut cmd = Command::new("cmd");
-    cmd.args(["/C", run]);
+    // raw_arg: std's default quoting escapes inner quotes as \" which cmd
+    // does not parse — the command line must reach cmd verbatim
+    cmd.arg("/C").raw_arg(run);
     cmd
   }
   #[cfg(not(windows))]
