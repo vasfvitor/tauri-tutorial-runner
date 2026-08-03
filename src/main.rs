@@ -38,10 +38,11 @@ enum Commands {
     #[arg(long)]
     step: Option<String>,
     /// set inside the pinned container image
-    #[arg(long, env = "TATU_CONTAINER", hide = true, default_value_t = false)]
+    // BoolishValueParser so `TATU_CONTAINER=1` parses; plain bool rejects anything but true/false
+    #[arg(long, env = "TATU_CONTAINER", hide = true, default_value_t = false, value_parser = clap::builder::BoolishValueParser::new())]
     container: bool,
     /// explicit override to run authoritatively outside the container
-    #[arg(long, env = "TATU_ALLOW_LOCAL", hide = true, default_value_t = false)]
+    #[arg(long, env = "TATU_ALLOW_LOCAL", hide = true, default_value_t = false, value_parser = clap::builder::BoolishValueParser::new())]
     allow_local: bool,
   },
   /// Parse and validate tutorial.yaml only
