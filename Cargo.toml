@@ -3,8 +3,14 @@ name = "tauri-tutorial-runner"
 version = "0.1.0"
 description = "Executable, verifiable tutorials for Tauri apps: one YAML compiles to a readable tutorial, a template, and a CI gate."
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
+repository = "https://github.com/vasfvitor/tauri-tutorial-runner"
+readme = "README.md"
 rust-version = "1.85"
+keywords = ["tauri", "tutorial", "documentation", "testing", "ci"]
+categories = ["development-tools::testing", "command-line-utilities"]
+include = ["/src", "/README.md", "/LICENSE"]
+publish = false
 
 [[bin]]
 name = "tatu"

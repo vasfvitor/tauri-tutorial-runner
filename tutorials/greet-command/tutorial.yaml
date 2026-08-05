@@ -11,7 +11,7 @@ env:
   image: TODO-pin-once-published
 
 base:
-  # vendored create-tauri-app 4.6.2 vanilla-ts scaffold (pnpm), identifier com.tatu.greet.
+  # vendored create-tauri-app 4.7.3 vanilla-ts scaffold (pnpm), identifier com.tatu.greet.
   # Re-vendoring is an explicit reviewed operation.
   fixture: base
 
