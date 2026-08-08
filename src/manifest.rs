@@ -1,5 +1,10 @@
+use std::fs;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
+use crate::tutorial::Tutorial;
 
 /// The committed contract between the runner and consumers (tauri-docs
 /// components read this JSON — field names and order are load-bearing for the
@@ -60,6 +65,59 @@ pub enum Status {
   Skipped,
 }
 
+// advisory and platform describe where a run happened, not what the tutorial
+// does — the committed expected manifest carries only the portable fields
+pub fn normalized(json: &str) -> Result<String> {
+  let mut value: serde_json::Value = serde_json::from_str(json)?;
+  if let Some(map) = value.as_object_mut() {
+    map.remove("advisory");
+    map.remove("platform");
+  }
+  Ok(serde_json::to_string_pretty(&value)? + "\n")
+}
+
+pub fn verify_expected(tutorial: &Tutorial) -> Result<()> {
+  let fresh = normalized(&read(
+    tutorial.out_manifest_path()?,
+    "run the tutorial first",
+  )?)?;
+  let expected = normalized(&read(
+    tutorial.expected_manifest_path(),
+    "`tatu bless` a reviewed run to create it",
+  )?)?;
+  if fresh == expected {
+    println!("manifest matches expected");
+    return Ok(());
+  }
+  print!(
+    "{}",
+    similar::TextDiff::from_lines(&expected, &fresh)
+      .unified_diff()
+      .context_radius(3)
+      .header("expected.manifest.json", "fresh run")
+  );
+  Err(Error::Runner(
+    "manifest drifted from expected — review the diff, then `tatu bless` to accept it".into(),
+  ))
+}
+
+pub fn bless_expected(tutorial: &Tutorial) -> Result<()> {
+  let raw = read(tutorial.out_manifest_path()?, "run the tutorial first")?;
+  let value: serde_json::Value = serde_json::from_str(&raw)?;
+  if value.get("advisory").and_then(|v| v.as_bool()) == Some(true) {
+    println!("note: blessing an advisory (host) run — authoritative manifests come from `tatu run` in the container");
+  }
+  let expected = tutorial.expected_manifest_path();
+  fs::write(&expected, normalized(&raw)?)?;
+  println!("wrote {}", expected.display());
+  Ok(())
+}
+
+fn read(path: std::path::PathBuf, hint: &str) -> Result<String> {
+  fs::read_to_string(&path)
+    .map_err(|e| Error::Runner(format!("cannot read {}: {e} — {hint}", path.display())))
+}
+
 pub fn platform() -> &'static str {
   if cfg!(windows) {
     "win32"
@@ -67,5 +125,28 @@ pub fn platform() -> &'static str {
     "darwin"
   } else {
     "linux"
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::normalized;
+
+  #[test]
+  fn normalized_strips_run_environment_fields() {
+    let json =
+      r#"{"schemaVersion":1,"id":"t","title":"T","advisory":true,"platform":"win32","steps":[]}"#;
+    let n = normalized(json).unwrap();
+    assert!(!n.contains("advisory"));
+    assert!(!n.contains("platform"));
+    assert!(n.contains("schemaVersion"));
+  }
+
+  #[test]
+  fn normalized_is_idempotent() {
+    let json =
+      r#"{"schemaVersion":1,"id":"t","title":"T","advisory":false,"platform":"linux","steps":[]}"#;
+    let once = normalized(json).unwrap();
+    assert_eq!(normalized(&once).unwrap(), once);
   }
 }

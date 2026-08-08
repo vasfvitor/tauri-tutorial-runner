@@ -19,12 +19,7 @@ pub struct RunOptions {
 }
 
 pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
-  let repo_root = tutorial
-    .dir
-    .parent()
-    .and_then(Path::parent)
-    .ok_or_else(|| Error::Runner("tutorial dir has no repo root two levels up".into()))?
-    .to_path_buf();
+  let repo_root = tutorial.repo_root()?;
   let work_dir = repo_root.join(".tatu").join("work").join(&tutorial.id);
   // shared across runs so a re-check pays incremental compile cost, not a cold build
   let target_dir = repo_root
@@ -126,9 +121,8 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
     println!("   step {}: {}", step.id, "ok".green());
   }
 
-  let out_dir = repo_root.join(".tatu").join("out").join(&tutorial.id);
-  fs::create_dir_all(&out_dir)?;
-  let manifest_path = out_dir.join("tutorial.manifest.json");
+  let manifest_path = tutorial.out_manifest_path()?;
+  fs::create_dir_all(manifest_path.parent().expect("manifest path has a dir"))?;
   fs::write(
     &manifest_path,
     serde_json::to_string_pretty(&manifest)? + "\n",
@@ -151,7 +145,7 @@ type RecordedDiffs = std::collections::HashMap<(String, String), String>;
 
 fn load_recorded_diffs(tutorial_dir: &Path) -> Result<RecordedDiffs> {
   // expected.manifest.json is the normalized manifest (advisory/platform
-  // stripped by CI seeding), so read only the fields the guard needs
+  // stripped by `tatu bless`), so read only the fields the guard needs
   #[derive(serde::Deserialize)]
   struct ExpectedManifest {
     steps: Vec<ExpectedStep>,

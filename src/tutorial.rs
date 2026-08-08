@@ -155,6 +155,35 @@ pub enum ExpectKeyword {
   Denied,
 }
 
+impl Tutorial {
+  /// two levels above the tutorial dir (`tutorials/<id>`)
+  pub fn repo_root(&self) -> Result<PathBuf> {
+    self
+      .dir
+      .parent()
+      .and_then(Path::parent)
+      .map(Path::to_path_buf)
+      .ok_or_else(|| Error::Runner("tutorial dir has no repo root two levels up".into()))
+  }
+
+  /// where a run writes its manifest
+  pub fn out_manifest_path(&self) -> Result<PathBuf> {
+    Ok(
+      self
+        .repo_root()?
+        .join(".tatu")
+        .join("out")
+        .join(&self.id)
+        .join("tutorial.manifest.json"),
+    )
+  }
+
+  /// the committed manifest CI compares runs against
+  pub fn expected_manifest_path(&self) -> PathBuf {
+    self.dir.join("expected.manifest.json")
+  }
+}
+
 pub fn load_tutorial(dir: &Path) -> Result<Tutorial> {
   let yaml_path = dir.join("tutorial.yaml");
   if !yaml_path.exists() {

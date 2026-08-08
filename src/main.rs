@@ -47,6 +47,10 @@ enum Commands {
   },
   /// Parse and validate tutorial.yaml only
   Validate { dir: PathBuf },
+  /// Compare the last run's manifest against the committed expected one
+  Verify { dir: PathBuf },
+  /// Accept the last run's manifest as the committed expected one
+  Bless { dir: PathBuf },
   /// Emit JSON Schemas (and optionally TypeScript) for the contracts
   Schema {
     /// output directory for the JSON Schemas
@@ -102,6 +106,8 @@ fn run() -> Result<()> {
       load_and_announce(&dir)?;
       Ok(())
     }
+    Commands::Verify { dir } => manifest::verify_expected(&load_and_announce(&dir)?),
+    Commands::Bless { dir } => manifest::bless_expected(&load_and_announce(&dir)?),
     Commands::Schema { out, emit_ts } => {
       std::fs::create_dir_all(&out)?;
       let tutorial_schema = schemars::schema_for!(Tutorial);

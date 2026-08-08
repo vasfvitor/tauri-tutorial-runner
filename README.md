@@ -23,6 +23,8 @@ The CLI binary is `tatu`:
 cargo run -q -- check tutorials/greet-command      # advisory run on your machine
 cargo run -q -- check tutorials/greet-command --step verify-greet   # one step only
 cargo run -q -- validate tutorials/rsbuild         # parse + validate only
+cargo run -q -- verify tutorials/greet-command     # last run's manifest vs expected
+cargo run -q -- bless tutorials/greet-command      # accept the last run's manifest
 cargo run -q -- schema                             # regenerate schemas/*.json
 cargo run -q -- schema --emit-ts path/to/types.ts  # manifest contract as TypeScript
 ```
@@ -37,8 +39,10 @@ app, so expect the first run to be slow.
 
 `tatu run` is the authoritative mode: it refuses to run outside the pinned
 container (`TATU_ALLOW_LOCAL=1` overrides) and writes `tutorial.manifest.json` —
-per step, the applied diffs, shell commands, and assertion results. CI compares
-that output against the `expected.manifest.json` committed with each tutorial.
+per step, the applied diffs, shell commands, and assertion results. `tatu verify`
+compares that output against the `expected.manifest.json` committed with each
+tutorial (ignoring the run-environment fields), and `tatu bless` accepts a
+reviewed run as the new expected manifest.
 
 The `ipc-acl` assertion kind tests real capability ACL behavior headlessly: the
 generated tests build the app with `tauri::generate_context!()`, which resolves the
@@ -69,8 +73,7 @@ Scaffold a base with create-tauri-app and commit it under `tutorials/<id>/base/`
 describe the steps in `tutorial.yaml` (the two existing tutorials show the step
 shape), and author each step's file changes as overlays under `steps/<step>/`.
 Iterate with `tatu check tutorials/<id>` until green, then run an authoritative
-`tatu run` and commit `.tatu/out/<id>/tutorial.manifest.json` as the tutorial's
-`expected.manifest.json`.
+`tatu run` and accept its manifest with `tatu bless tutorials/<id>`.
 
 ## CI
 
@@ -80,7 +83,7 @@ Iterate with `tatu check tutorials/<id>` until green, then run an authoritative
   that the committed schemas match the code.
 - `tutorials` runs every tutorial in the pinned container, weekly and on manual
   dispatch, and compares each manifest against the committed expected one
-  A red step means the tutorial, or Tauri underneath it, broke.
+  (`tatu verify`). A red step means the tutorial, or Tauri underneath it, broke.
 - `image` publishes the container image to GHCR whenever the `Dockerfile`
   changes, tagged with the Dockerfile's content hash; `tutorials` pulls that
   tag and builds locally only when it has not been published yet.

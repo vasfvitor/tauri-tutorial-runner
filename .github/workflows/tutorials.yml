@@ -59,14 +59,8 @@ jobs:
 
       - name: Manifest matches expected (platform-independent fields)
         run: |
-          node -e '
-            const fs = require("fs");
-            const norm = (p) => { const m = JSON.parse(fs.readFileSync(p, "utf8")); delete m.advisory; delete m.platform; return JSON.stringify(m, null, 2); };
-            const fresh = norm(".tatu/out/${{ matrix.tutorial }}/tutorial.manifest.json");
-            const expected = norm("tutorials/${{ matrix.tutorial }}/expected.manifest.json");
-            if (fresh !== expected) { console.error("manifest drifted from expected"); process.exit(1); }
-            console.log("manifest matches expected");
-          '
+          docker run --rm -v "$PWD:/work" -e CARGO_HOME=/work/.tatu/cargo-home "$IMAGE" \
+            cargo run --release -- verify "tutorials/${{ matrix.tutorial }}"
 
       - uses: actions/upload-artifact@v7
         if: always()
