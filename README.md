@@ -79,8 +79,11 @@ Iterate with `tatu check tutorials/<id>` until green, then run an authoritative
   no-CRLF guard (CRLF in a vendored base poisons the recorded diffs), and a check
   that the committed schemas match the code.
 - `tutorials` runs every tutorial in the pinned container, weekly and on manual
-  dispatch, and compares each manifest against the committed expected one. A red
-  step means the tutorial — or Tauri underneath it — broke.
+  dispatch, and compares each manifest against the committed expected one
+  A red step means the tutorial, or Tauri underneath it, broke.
+- `image` publishes the container image to GHCR whenever the `Dockerfile`
+  changes, tagged with the Dockerfile's content hash; `tutorials` pulls that
+  tag and builds locally only when it has not been published yet.
 
 ## Prerequisites
 

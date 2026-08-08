@@ -9,7 +9,7 @@ meta:
   platforms: [windows, macos, linux]
 
 env:
-  image: TODO-pin-once-published
+  image: ghcr.io/vasfvitor/tauri-tutorial-runner
 
 base:
   # vendored create-tauri-app 4.7.3 vanilla-ts scaffold (pnpm), identifier com.tatu.rsbuild

@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   run:
@@ -40,14 +41,20 @@ jobs:
             tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', format('tutorials/{0}/base/src-tauri/Cargo.lock', matrix.tutorial)) }}-
             tutorials-${{ matrix.tutorial }}-
 
-      - name: Build runner image
+      # published by image.yml under the Dockerfile's content hash; the local
+      # build is only the first-run fallback before that tag exists
+      - name: Pull runner image
         timeout-minutes: 10
-        run: docker build -t tatu-runner .
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}:df-${{ hashFiles('Dockerfile') }}"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE" || docker build -t "$IMAGE" .
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       - name: Run tutorial (authoritative)
         timeout-minutes: 45
         run: |
-          docker run --rm -v "$PWD:/work" -e CARGO_HOME=/work/.tatu/cargo-home tatu-runner \
+          docker run --rm -v "$PWD:/work" -e CARGO_HOME=/work/.tatu/cargo-home "$IMAGE" \
             cargo run --release -- run "tutorials/${{ matrix.tutorial }}"
 
       - name: Manifest matches expected (platform-independent fields)
