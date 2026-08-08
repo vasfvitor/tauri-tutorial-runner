@@ -11,9 +11,9 @@ env:
   image: ghcr.io/vasfvitor/tauri-tutorial-runner
 
 base:
-  # vendored create-tauri-app 4.7.3 vanilla-ts scaffold (pnpm), identifier com.tatu.greet.
-  # Re-vendoring is an explicit reviewed operation.
-  fixture: base
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app.
+  # Re-vendoring is an explicit reviewed operation on the pool base.
+  fixture: ../../bases/vanilla-ts@4.7.3
 
 steps:
   - id: verify-greet

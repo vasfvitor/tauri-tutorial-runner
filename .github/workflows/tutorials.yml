@@ -36,9 +36,9 @@ jobs:
             .tatu/cargo-home
           # unique key so every run saves (an exact hit skips the save, losing
           # whatever the tutorial compiled this time); restore picks the newest prefix match
-          key: tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', format('tutorials/{0}/base/src-tauri/Cargo.lock', matrix.tutorial)) }}-${{ github.run_id }}
+          key: tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'bases/**/src-tauri/Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', format('tutorials/{0}/base/src-tauri/Cargo.lock', matrix.tutorial)) }}-
+            tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'bases/**/src-tauri/Cargo.lock') }}-
             tutorials-${{ matrix.tutorial }}-
 
       # published by image.yml under the Dockerfile's content hash; the local

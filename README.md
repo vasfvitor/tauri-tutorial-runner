@@ -53,25 +53,27 @@ granted and succeeds after — the silent-ACL-failure class, made loud.
 ## Tutorial anatomy
 
 ```
+bases/<template>@<version>/  # vendored create-tauri-app scaffolds, shared by tutorials
 tutorials/<id>/
-  tutorial.yaml            # steps: task (agent prompt) + mutations + assertions
-  base/                    # vendored scaffold (create-tauri-app output, committed)
+  tutorial.yaml            # steps: task (agent prompt) + mutations + assertions;
+                           # base.fixture points into bases/
   steps/<step>/            # overlay files, copied over the work tree by that step
   expected.manifest.json   # committed output of the last authoritative run
 ```
 
 Overlays are the authoring surface; the runner derives base-relative diffs from
 them as the canonical record (a raw overlay would silently revert scaffold changes
-it doesn't discuss; a diff fails loudly). The `base/` trees are unmodified
-create-tauri-app output; re-vendoring one is an explicit, reviewed operation, and
-the runner fails when a re-vendored base diverges from an overlay outside its
-recorded diff.
+it doesn't discuss; a diff fails loudly). The `bases/` trees are unmodified
+create-tauri-app output, generated with the app name `tatu-app` and shared across
+tutorials; re-vendoring one is an explicit, reviewed operation, and the runner
+fails when a re-vendored base diverges from an overlay outside its recorded diff.
 
 ## Adding a tutorial
 
-Scaffold a base with create-tauri-app and commit it under `tutorials/<id>/base/`,
-describe the steps in `tutorial.yaml` (the two existing tutorials show the step
-shape), and author each step's file changes as overlays under `steps/<step>/`.
+Point `base.fixture` at a scaffold in `bases/` (or vendor a new one with
+create-tauri-app, using the app name `tatu-app`), describe the steps in
+`tutorial.yaml` (the two existing tutorials show the step shape), and author
+each step's file changes as overlays under `steps/<step>/`.
 Iterate with `tatu check tutorials/<id>` until green, then run an authoritative
 `tatu run` and accept its manifest with `tatu bless tutorials/<id>`.
 

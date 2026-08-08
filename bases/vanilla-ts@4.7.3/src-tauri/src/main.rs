@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    greet_command_lib::run()
+    tatu_app_lib::run()
 }

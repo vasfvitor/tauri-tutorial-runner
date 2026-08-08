@@ -12,8 +12,8 @@ env:
   image: ghcr.io/vasfvitor/tauri-tutorial-runner
 
 base:
-  # vendored create-tauri-app 4.7.3 vanilla-ts scaffold (pnpm), identifier com.tatu.rsbuild
-  fixture: base
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
+  fixture: ../../bases/vanilla-ts@4.7.3
 
 steps:
   - id: switch-to-rsbuild
