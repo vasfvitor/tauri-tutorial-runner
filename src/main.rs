@@ -47,6 +47,8 @@ enum Commands {
   },
   /// Parse and validate tutorial.yaml only
   Validate { dir: PathBuf },
+  /// Re-scaffold a pool base with create-tauri-app (dir name: <template>@<cta-version>)
+  Revendor { dir: PathBuf },
   /// Compare the last run's manifest against the committed expected one
   Verify { dir: PathBuf },
   /// Accept the last run's manifest as the committed expected one
@@ -106,6 +108,7 @@ fn run() -> Result<()> {
       load_and_announce(&dir)?;
       Ok(())
     }
+    Commands::Revendor { dir } => tauri_tutorial_runner::revendor::revendor(&dir),
     Commands::Verify { dir } => manifest::verify_expected(&load_and_announce(&dir)?),
     Commands::Bless { dir } => manifest::bless_expected(&load_and_announce(&dir)?),
     Commands::Schema { out, emit_ts } => {

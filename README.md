@@ -25,6 +25,7 @@ cargo run -q -- check tutorials/greet-command --step verify-greet   # one step o
 cargo run -q -- validate tutorials/rsbuild         # parse + validate only
 cargo run -q -- verify tutorials/greet-command     # last run's manifest vs expected
 cargo run -q -- bless tutorials/greet-command      # accept the last run's manifest
+cargo run -q -- revendor bases/vanilla-ts@4.7.3    # re-scaffold a pool base with CTA
 cargo run -q -- schema                             # regenerate schemas/*.json
 cargo run -q -- schema --emit-ts path/to/types.ts  # manifest contract as TypeScript
 ```
@@ -67,6 +68,14 @@ it doesn't discuss; a diff fails loudly). The `bases/` trees are unmodified
 create-tauri-app output, generated with the app name `tatu-app` and shared across
 tutorials; re-vendoring one is an explicit, reviewed operation, and the runner
 fails when a re-vendored base diverges from an overlay outside its recorded diff.
+
+`tatu revendor bases/<template>@<version>` re-scaffolds a pool base: it requires
+that exact create-tauri-app version installed (`cargo install
+create-tauri-app@<version> --locked` — npm can lag behind crates.io), drops
+CTA's own `.gitignore` and `README.md`, regenerates `src-tauri/Cargo.lock`, and
+prints what changed. Follow with `tatu check` on every tutorial using the base,
+review, then `tatu bless`. Bumping the CTA version means scaffolding into a new
+`bases/<template>@<new-version>/` dir and pointing tutorials at it one by one.
 
 ## Adding a tutorial
 
