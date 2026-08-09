@@ -38,8 +38,8 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
     schema_version: crate::manifest::SCHEMA_VERSION,
     id: tutorial.id.clone(),
     title: tutorial.title.clone(),
-    advisory: !options.authoritative,
-    platform: platform().to_string(),
+    advisory: Some(!options.authoritative),
+    platform: Some(platform().to_string()),
     steps: Vec::new(),
   };
 
@@ -130,7 +130,11 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
   println!(
     "\nmanifest: {}{}",
     manifest_path.display(),
-    if manifest.advisory { " (advisory)" } else { "" }
+    if manifest.advisory == Some(true) {
+      " (advisory)"
+    } else {
+      ""
+    }
   );
 
   if failed {
@@ -144,24 +148,12 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 type RecordedDiffs = std::collections::HashMap<(String, String), String>;
 
 fn load_recorded_diffs(tutorial: &Tutorial) -> Result<RecordedDiffs> {
-  // expected.manifest.json is the normalized manifest (advisory/platform
-  // stripped by `tatu bless`), so read only the fields the guard needs
-  #[derive(serde::Deserialize)]
-  struct ExpectedManifest {
-    steps: Vec<ExpectedStep>,
-  }
-  #[derive(serde::Deserialize)]
-  struct ExpectedStep {
-    id: String,
-    mutations: Vec<MutationRecord>,
-  }
-
   let path = tutorial.expected_manifest_path();
   let mut map = RecordedDiffs::new();
   if !path.exists() {
     return Ok(map);
   }
-  let expected: ExpectedManifest = serde_json::from_str(&fs::read_to_string(&path)?)
+  let expected: Manifest = serde_json::from_str(&fs::read_to_string(&path)?)
     .map_err(|e| Error::Runner(format!("unreadable {}: {e}", path.display())))?;
   for step in expected.steps {
     for mutation in step.mutations {

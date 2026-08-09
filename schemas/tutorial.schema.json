@@ -10,7 +10,6 @@
       "type": "string"
     },
     "meta": true,
-    "env": true,
     "base": {
       "$ref": "#/$defs/Base"
     },
@@ -43,17 +42,14 @@
       "type": "object",
       "properties": {
         "fixture": {
-          "description": "vendored scaffold dir, relative to the tutorial dir (v0: required)",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "setup": {
-          "description": "re-scaffolding commands — parsed but not implemented in v0"
+          "description": "vendored scaffold dir, relative to the tutorial dir (usually a `bases/`\npool entry; `tatu revendor` re-scaffolds those)",
+          "type": "string"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "fixture"
+      ]
     },
     "Harness": {
       "type": "object",

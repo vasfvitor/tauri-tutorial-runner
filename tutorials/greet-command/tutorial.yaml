@@ -6,10 +6,6 @@ meta:
   time: 15min
   platforms: [windows, macos, linux]
 
-env:
-  # pinned container for authoritative runs; host runs are advisory (`tatu check`)
-  image: ghcr.io/vasfvitor/tauri-tutorial-runner
-
 base:
   # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app.
   # Re-vendoring is an explicit reviewed operation on the pool base.

@@ -16,12 +16,18 @@
       "type": "string"
     },
     "advisory": {
-      "description": "true when produced outside the pinned container (`tatu check`)",
-      "type": "boolean"
+      "description": "true when produced outside the pinned container (`tatu check`); absent,\nlike platform, in the committed expected manifest (`tatu bless` strips\nthe run-environment fields)",
+      "type": [
+        "boolean",
+        "null"
+      ]
     },
     "platform": {
       "description": "node-compatible platform tag: win32 / darwin / linux",
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "steps": {
       "type": "array",
@@ -34,8 +40,6 @@
     "schemaVersion",
     "id",
     "title",
-    "advisory",
-    "platform",
     "steps"
   ],
   "$defs": {

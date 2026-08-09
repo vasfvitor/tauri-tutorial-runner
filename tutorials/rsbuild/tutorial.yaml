@@ -8,9 +8,6 @@ meta:
   time: 10min
   platforms: [windows, macos, linux]
 
-env:
-  image: ghcr.io/vasfvitor/tauri-tutorial-runner
-
 base:
   # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
   fixture: ../../bases/vanilla-ts@4.7.3

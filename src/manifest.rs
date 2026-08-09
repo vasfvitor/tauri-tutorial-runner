@@ -18,10 +18,14 @@ pub struct Manifest {
   pub schema_version: u32,
   pub id: String,
   pub title: String,
-  /// true when produced outside the pinned container (`tatu check`)
-  pub advisory: bool,
+  /// true when produced outside the pinned container (`tatu check`); absent,
+  /// like platform, in the committed expected manifest (`tatu bless` strips
+  /// the run-environment fields)
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub advisory: Option<bool>,
   /// node-compatible platform tag: win32 / darwin / linux
-  pub platform: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub platform: Option<String>,
   pub steps: Vec<StepRecord>,
 }
 
@@ -66,13 +70,18 @@ pub enum Status {
 
 // advisory and platform describe where a run happened, not what the tutorial
 // does — the committed expected manifest carries only the portable fields
+fn strip_run_environment(mut manifest: Manifest) -> Manifest {
+  manifest.advisory = None;
+  manifest.platform = None;
+  manifest
+}
+
+fn render(manifest: &Manifest) -> Result<String> {
+  Ok(serde_json::to_string_pretty(manifest)? + "\n")
+}
+
 pub fn normalized(json: &str) -> Result<String> {
-  let mut value: serde_json::Value = serde_json::from_str(json)?;
-  if let Some(map) = value.as_object_mut() {
-    map.remove("advisory");
-    map.remove("platform");
-  }
-  Ok(serde_json::to_string_pretty(&value)? + "\n")
+  render(&strip_run_environment(serde_json::from_str(json)?))
 }
 
 pub fn verify_expected(tutorial: &Tutorial) -> Result<()> {
@@ -99,12 +108,12 @@ pub fn verify_expected(tutorial: &Tutorial) -> Result<()> {
 
 pub fn bless_expected(tutorial: &Tutorial) -> Result<()> {
   let raw = read(tutorial.out_manifest_path()?, "run the tutorial first")?;
-  let value: serde_json::Value = serde_json::from_str(&raw)?;
-  if value.get("advisory").and_then(|v| v.as_bool()) == Some(true) {
+  let manifest: Manifest = serde_json::from_str(&raw)?;
+  if manifest.advisory == Some(true) {
     println!("note: blessing an advisory (host) run — authoritative manifests come from `tatu run` in the container");
   }
   let expected = tutorial.expected_manifest_path();
-  fs::write(&expected, normalized(&raw)?)?;
+  fs::write(&expected, render(&strip_run_environment(manifest))?)?;
   println!("wrote {}", expected.display());
   Ok(())
 }
@@ -144,5 +153,23 @@ mod tests {
       r#"{"schemaVersion":1,"id":"t","title":"T","advisory":false,"platform":"linux","steps":[]}"#;
     let once = normalized(json).unwrap();
     assert_eq!(normalized(&once).unwrap(), once);
+  }
+
+  // the typed round-trip must reproduce what `tatu bless` committed — a field
+  // reorder or serde attribute change here would make every manifest "drift"
+  #[test]
+  fn committed_expected_manifests_are_normalized_fixed_points() {
+    let tutorials = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tutorials");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(tutorials).unwrap() {
+      let path = entry.unwrap().path().join("expected.manifest.json");
+      if !path.exists() {
+        continue;
+      }
+      let text = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+      assert_eq!(normalized(&text).unwrap(), text, "{}", path.display());
+      seen += 1;
+    }
+    assert!(seen >= 2, "expected manifests not found");
   }
 }

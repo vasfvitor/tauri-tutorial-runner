@@ -14,8 +14,6 @@ pub struct Tutorial {
   pub title: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub meta: Option<serde_json::Value>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub env: Option<serde_json::Value>,
   pub base: Base,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub harness: Option<Harness>,
@@ -31,12 +29,9 @@ pub struct Tutorial {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Base {
-  /// vendored scaffold dir, relative to the tutorial dir (v0: required)
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub fixture: Option<String>,
-  /// re-scaffolding commands — parsed but not implemented in v0
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub setup: Option<serde_json::Value>,
+  /// vendored scaffold dir, relative to the tutorial dir (usually a `bases/`
+  /// pool entry; `tatu revendor` re-scaffolds those)
+  pub fixture: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -183,12 +178,7 @@ pub fn load_tutorial(dir: &Path) -> Result<Tutorial> {
   let mut tutorial: Tutorial = serde_norway::from_str(&fs::read_to_string(&yaml_path)?)?;
   tutorial.dir = dir.to_path_buf();
 
-  let Some(fixture) = &tutorial.base.fixture else {
-    return Err(Error::Validate(
-      "tutorial.yaml: v0 requires base.fixture (a vendored scaffold dir); base.setup is not implemented yet".into(),
-    ));
-  };
-  tutorial.fixture_dir = dir.join(fixture);
+  tutorial.fixture_dir = dir.join(&tutorial.base.fixture);
   if !tutorial.fixture_dir.exists() {
     return Err(Error::Validate(format!(
       "base.fixture dir not found: {}",
