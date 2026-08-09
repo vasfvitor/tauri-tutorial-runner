@@ -50,7 +50,7 @@ pub fn apply_json_merge(
   let target = work_dir.join(file);
   let before = fs::read_to_string(&target)?;
   let merged = deep_merge(serde_json::from_str(&before)?, merge);
-  let after = to_json_matching_style(&merged, &before)?;
+  let after = crate::json_style::render_merged(&before, &merged)?;
   fs::write(&target, &after)?;
   Ok(vec![MutationRecord {
     file: Some(file.to_string()),
@@ -97,32 +97,6 @@ pub fn shell_command(run: &str) -> Command {
     cmd.args(["-c", run]);
     cmd
   }
-}
-
-// the recorded diff must show the merge, not a reflow — match the target
-// file's own indentation and trailing-newline style
-fn to_json_matching_style(value: &serde_json::Value, original: &str) -> Result<String> {
-  use serde::Serialize;
-  let indent = detect_indent(original);
-  let mut buf = Vec::new();
-  let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
-  let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);
-  value.serialize(&mut serializer)?;
-  let mut out = String::from_utf8(buf).expect("serde_json emits utf8");
-  if original.ends_with('\n') {
-    out.push('\n');
-  }
-  Ok(out)
-}
-
-fn detect_indent(text: &str) -> String {
-  text
-    .lines()
-    .find_map(|line| {
-      let ws: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-      (!ws.is_empty() && ws.len() < line.len()).then_some(ws)
-    })
-    .unwrap_or_else(|| "  ".to_string())
 }
 
 // objects merge recursively; arrays are a union (append missing entries) — the
@@ -197,7 +171,7 @@ fn unified_diff(before: Option<&str>, after: &str, label: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::{overlay_reverted_lines, to_json_matching_style};
+  use super::{deep_merge, overlay_reverted_lines, unified_diff};
 
   const RECORDED: &str = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+new_line\n+added_line\n context2\n";
 
@@ -227,26 +201,30 @@ mod tests {
     assert!(overlay_reverted_lines("", "--- a/x\n+++ b/x\n").is_empty());
   }
 
+  // the exact greet-tutorial merge against the real pool base — its diff is
+  // committed in expected.manifest.json, so a rendering change here means
+  // that manifest must be re-blessed
   #[test]
-  fn json_style_keeps_four_space_indent_and_missing_newline() {
-    let original = "{\n    \"a\": 1,\n    \"b\": {\n        \"c\": 2\n    }\n}";
-    let value: serde_json::Value = serde_json::from_str(original).unwrap();
-    assert_eq!(to_json_matching_style(&value, original).unwrap(), original);
-  }
-
-  #[test]
-  fn json_style_keeps_tabs_and_trailing_newline() {
-    let original = "{\n\t\"a\": 1\n}\n";
-    let value: serde_json::Value = serde_json::from_str(original).unwrap();
-    assert_eq!(to_json_matching_style(&value, original).unwrap(), original);
-  }
-
-  #[test]
-  fn json_style_defaults_to_two_spaces() {
-    let value: serde_json::Value = serde_json::from_str(r#"{"a":1}"#).unwrap();
+  fn greet_capability_merge_diff_is_minimal() {
+    let before = std::fs::read_to_string(
+      std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("bases/vanilla-ts@4.7.3/src-tauri/capabilities/default.json"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    let merge = serde_json::json!({
+      "permissions": ["fs:default", "fs:allow-appdata-read-recursive"]
+    });
+    let merged = deep_merge(serde_json::from_str(&before).unwrap(), &merge);
+    let after = crate::json_style::render_merged(&before, &merged).unwrap();
+    let diff = unified_diff(Some(&before), &after, "src-tauri/capabilities/default.json");
     assert_eq!(
-      to_json_matching_style(&value, "{}\n").unwrap(),
-      "{\n  \"a\": 1\n}\n"
+      diff,
+      "--- a/src-tauri/capabilities/default.json\n\
+       +++ b/src-tauri/capabilities/default.json\n\
+       @@ -5,6 +5,8 @@\n   \"windows\": [\"main\"],\n   \"permissions\": [\n     \"core:default\",\n\
+       -    \"opener:default\"\n+    \"opener:default\",\n+    \"fs:default\",\n\
+       +    \"fs:allow-appdata-read-recursive\"\n   ]\n }\n"
     );
   }
 }
