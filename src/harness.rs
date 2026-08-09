@@ -58,10 +58,9 @@ pub struct HarnessGuard {
 }
 
 // The base or an overlay may carry its own [dev-dependencies] (even its own
-// tauri dev-dep) — appending a second table is a cargo error, so merge:
-// create the table if absent, insert or widen the tauri entry, and make sure
-// the `test` feature is on. The write is transient (HarnessGuard restores the
-// original), so formatting only has to stay valid, not pretty.
+// tauri dev-dep), and appending a second table is a cargo error — so merge.
+// The write is transient (HarnessGuard restores the original), so formatting
+// only has to stay valid, not pretty.
 fn cargo_toml_with_harness(original: &str) -> Result<String> {
   use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, Value};
 

@@ -28,7 +28,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
 # vendored base's — so a cold cargo-home cache pays no crates.io downloads.
 # Fetch only: compiled artifacts would balloon the image for a saving the
 # actions cache already provides when warm. The image tag hashes these
-# inputs too (see image.yml), so the baked registry tracks the lockfiles.
+# inputs too (.github/actions/runner-image), so the baked registry tracks
+# the lockfiles.
 COPY Cargo.toml Cargo.lock /warm/runner/
 COPY bases /warm/bases
 RUN mkdir -p /warm/runner/src && echo 'fn main() {}' > /warm/runner/src/main.rs \
