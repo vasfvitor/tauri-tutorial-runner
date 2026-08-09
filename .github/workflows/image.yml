@@ -1,15 +1,21 @@
 name: image
 
-# Publishes the pinned runner image to GHCR. The tag is the Dockerfile's
-# content hash, so the tutorials workflow pulls exactly the image its checkout
-# describes. Re-run via dispatch to refresh apt package state under the same
-# tag when the Dockerfile itself has not changed.
+# Publishes the pinned runner image to GHCR. The tag is the content hash of
+# everything that shapes the image — the Dockerfile plus the lockfiles whose
+# dep graphs it pre-fetches — so the tutorials workflow pulls exactly the
+# image its checkout describes. Re-run via dispatch to refresh apt package
+# state under the same tag when none of those inputs changed.
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [Dockerfile, .github/workflows/image.yml]
+    paths:
+      - Dockerfile
+      - Cargo.toml
+      - Cargo.lock
+      - bases/**
+      - .github/workflows/image.yml
 
 permissions:
   contents: read
@@ -24,7 +30,8 @@ jobs:
       - name: Build and push
         run: |
           IMAGE="ghcr.io/${{ github.repository }}"
-          TAG="df-${{ hashFiles('Dockerfile') }}"
+          # must match the pull expression in tutorials.yml
+          TAG="env-${{ hashFiles('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'bases/**') }}"
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
           docker push "$IMAGE:$TAG"
