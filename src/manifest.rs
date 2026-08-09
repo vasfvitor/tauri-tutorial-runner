@@ -62,7 +62,6 @@ pub struct ResultRecord {
 pub enum Status {
   Pass,
   Fail,
-  Skipped,
 }
 
 // advisory and platform describe where a run happened, not what the tutorial

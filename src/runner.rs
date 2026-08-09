@@ -213,19 +213,6 @@ fn run_assertion_phase(
     return Ok(results);
   }
 
-  for assertion in list.iter().filter(|a| !a.kind.implemented()) {
-    println!(
-      "   skip ({} not implemented in v0)",
-      assertion.kind.as_str()
-    );
-    results.push(ResultRecord {
-      kind: assertion.kind.as_str().to_string(),
-      command: None,
-      run: None,
-      status: Status::Skipped,
-    });
-  }
-
   let ipc: Vec<&Assertion> = list.iter().filter(|a| a.kind.is_ipc()).collect();
   if !ipc.is_empty() {
     let guard = apply_harness(work_dir)?;

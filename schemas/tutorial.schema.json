@@ -168,21 +168,6 @@
             "string",
             "null"
           ]
-        },
-        "spec": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "platforms": {
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
         }
       },
       "additionalProperties": false,
@@ -195,10 +180,7 @@
       "enum": [
         "ipc-local",
         "ipc-acl",
-        "cargo-test",
-        "shell",
-        "build",
-        "e2e"
+        "shell"
       ]
     },
     "Expect": {

@@ -136,8 +136,7 @@
       "type": "string",
       "enum": [
         "pass",
-        "fail",
-        "skipped"
+        "fail"
       ]
     }
   }

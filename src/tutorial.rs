@@ -87,15 +87,15 @@ pub enum Mutation {
   },
 }
 
+// only kinds the runner actually executes belong here — a kind that parses but
+// skips would let a tutorial read as verified without anything having run.
+// Future kinds (frontend build, e2e) get added when they run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AssertionKind {
   IpcLocal,
   IpcAcl,
-  CargoTest,
   Shell,
-  Build,
-  E2e,
 }
 
 impl AssertionKind {
@@ -103,16 +103,8 @@ impl AssertionKind {
     match self {
       Self::IpcLocal => "ipc-local",
       Self::IpcAcl => "ipc-acl",
-      Self::CargoTest => "cargo-test",
       Self::Shell => "shell",
-      Self::Build => "build",
-      Self::E2e => "e2e",
     }
-  }
-
-  /// implemented in v0; the rest parse but are skipped with a warning
-  pub fn implemented(&self) -> bool {
-    matches!(self, Self::IpcLocal | Self::IpcAcl | Self::Shell)
   }
 
   pub fn is_ipc(&self) -> bool {
@@ -135,10 +127,6 @@ pub struct Assertion {
   pub setup: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub run: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub spec: Option<String>,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub platforms: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
