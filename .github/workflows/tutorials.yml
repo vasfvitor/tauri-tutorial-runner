@@ -18,13 +18,30 @@ permissions:
   packages: read
 
 jobs:
+  # a new tutorials/<id>/ dir joins the matrix by existing — no workflow edit
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tutorials: ${{ steps.list.outputs.tutorials }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        run: |
+          tutorials=$(cd tutorials && for d in */; do
+            if [ -f "$d/tutorial.yaml" ]; then basename "$d"; fi
+          done | jq -R . | jq -sc .)
+          echo "discovered: $tutorials"
+          echo "tutorials=$tutorials" >> "$GITHUB_OUTPUT"
+
   run:
+    needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        tutorial: [greet-command, rsbuild]
+        tutorial: ${{ fromJSON(needs.discover.outputs.tutorials) }}
     steps:
       - uses: actions/checkout@v7
 
