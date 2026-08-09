@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::tutorial::{Assertion, Expect, ExpectKeyword, Harness};
 
 // Test-harness pieces the runner owns, injected into the work tree and never
@@ -14,12 +14,6 @@ use crate::tutorial::{Assertion, Expect, ExpectKeyword, Harness};
 //
 // The generated-file templates are locked byte-for-byte by tests/golden.rs;
 // do not reformat them.
-
-const DEV_DEP_BLOCK: &str = "
-# tatu:harness — tauri::test is feature-gated
-[dev-dependencies]
-tauri = { version = \"2\", features = [\"test\"] }
-";
 
 const BUILD_RS_BLOCK: &str = r#"// tatu:harness — cargo test exes need the comctl32 v6 manifest on Windows
 // (tauri-build embeds it for bins only; without this the test exe dies at load
@@ -63,21 +57,89 @@ pub struct HarnessGuard {
   manifest_xml: std::path::PathBuf,
 }
 
+// The base or an overlay may carry its own [dev-dependencies] (even its own
+// tauri dev-dep) — appending a second table is a cargo error, so merge:
+// create the table if absent, insert or widen the tauri entry, and make sure
+// the `test` feature is on. The write is transient (HarnessGuard restores the
+// original), so formatting only has to stay valid, not pretty.
+fn cargo_toml_with_harness(original: &str) -> Result<String> {
+  use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, Value};
+
+  let mut doc: DocumentMut = original
+    .parse()
+    .map_err(|e| Error::Runner(format!("src-tauri/Cargo.toml: {e}")))?;
+  let dev = doc
+    .entry("dev-dependencies")
+    .or_insert(Item::Table(Table::new()))
+    .as_table_like_mut()
+    .ok_or_else(|| {
+      Error::Runner("src-tauri/Cargo.toml: [dev-dependencies] is not a table".into())
+    })?;
+
+  match dev.get_mut("tauri") {
+    None => {
+      let mut dep = InlineTable::new();
+      dep.insert("version", "2".into());
+      dep.insert("features", Value::Array(Array::from_iter(["test"])));
+      dev.insert("tauri", toml_edit::value(dep));
+    }
+    Some(existing) => {
+      if let Some(version) = existing.as_str().map(str::to_string) {
+        // plain `tauri = "x"` — widen to a table so the feature fits
+        let mut dep = InlineTable::new();
+        dep.insert("version", version.into());
+        dep.insert("features", Value::Array(Array::from_iter(["test"])));
+        *existing = toml_edit::value(dep);
+      } else if let Some(dep) = existing.as_table_like_mut() {
+        if dep.get("features").is_none() {
+          dep.insert("features", toml_edit::value(Array::new()));
+        }
+        let features = dep
+          .get_mut("features")
+          .and_then(Item::as_array_mut)
+          .ok_or_else(|| {
+            Error::Runner(
+              "src-tauri/Cargo.toml: dev-dependencies.tauri.features is not an array".into(),
+            )
+          })?;
+        if !features.iter().any(|v| v.as_str() == Some("test")) {
+          features.push("test");
+        }
+      } else {
+        return Err(Error::Runner(
+          "src-tauri/Cargo.toml: dev-dependencies.tauri has an unrecognized shape".into(),
+        ));
+      }
+    }
+  }
+
+  // marker: greppable for the idempotence check and the manifest leak assertion
+  if let Some(value) = dev.get_mut("tauri").and_then(Item::as_value_mut) {
+    value
+      .decor_mut()
+      .set_suffix(" # tatu:harness — tauri::test is feature-gated");
+  }
+
+  Ok(doc.to_string())
+}
+
 pub fn apply_harness(work_dir: &Path) -> Result<HarnessGuard> {
   let src_tauri = work_dir.join("src-tauri");
 
   let cargo_toml = src_tauri.join("Cargo.toml");
   let cargo_toml_original = fs::read_to_string(&cargo_toml)?;
   if !cargo_toml_original.contains("tatu:harness") {
-    fs::write(
-      &cargo_toml,
-      format!("{}\n{}", cargo_toml_original.trim_end(), DEV_DEP_BLOCK),
-    )?;
+    fs::write(&cargo_toml, cargo_toml_with_harness(&cargo_toml_original)?)?;
   }
 
   let build_rs = src_tauri.join("build.rs");
   let build_rs_original = fs::read_to_string(&build_rs)?;
   if !build_rs_original.contains("tatu:harness") {
+    if !build_rs_original.contains("fn main() {") {
+      return Err(Error::Runner(
+        "src-tauri/build.rs has no `fn main() {` to anchor the tatu test-manifest hook — without it Windows test exes die at load".into(),
+      ));
+    }
     let wrapped =
       build_rs_original.replacen("fn main() {", "fn main() {\n    tatu_test_manifest();", 1);
     fs::write(&build_rs, format!("{BUILD_RS_BLOCK}\n{wrapped}"))?;
@@ -277,4 +339,67 @@ fn indent(text: &str, n: usize) -> String {
 // JSON.stringify-compatible string quoting for embedding literals in generated code
 fn json_string(s: &str) -> String {
   serde_json::to_string(s).expect("string serialize")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::cargo_toml_with_harness;
+
+  const SCAFFOLD: &str = "[package]\nname = \"tatu-app\"\n\n[dependencies]\ntauri = { version = \"2\", features = [] }\n";
+
+  fn tauri_dev_dep(toml: &str) -> toml_edit::Item {
+    let doc: toml_edit::DocumentMut = toml.parse().expect("output is valid TOML");
+    doc["dev-dependencies"]["tauri"].clone()
+  }
+
+  #[test]
+  fn creates_dev_dependencies_when_absent() {
+    let out = cargo_toml_with_harness(SCAFFOLD).unwrap();
+    let dep = tauri_dev_dep(&out);
+    assert_eq!(dep["version"].as_str(), Some("2"));
+    assert_eq!(dep["features"][0].as_str(), Some("test"));
+    assert!(out.contains("tatu:harness"));
+  }
+
+  #[test]
+  fn merges_into_existing_dev_dependencies() {
+    let toml = format!("{SCAFFOLD}\n[dev-dependencies]\nserde_json = \"1\"\n");
+    let out = cargo_toml_with_harness(&toml).unwrap();
+    assert_eq!(out.matches("[dev-dependencies]").count(), 1);
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    assert!(doc["dev-dependencies"]["serde_json"].is_str());
+    assert_eq!(
+      doc["dev-dependencies"]["tauri"]["features"][0].as_str(),
+      Some("test")
+    );
+  }
+
+  #[test]
+  fn widens_a_plain_version_tauri_dev_dep() {
+    let toml = format!("{SCAFFOLD}\n[dev-dependencies]\ntauri = \"2.5\"\n");
+    let dep = tauri_dev_dep(&cargo_toml_with_harness(&toml).unwrap());
+    assert_eq!(dep["version"].as_str(), Some("2.5"));
+    assert_eq!(dep["features"][0].as_str(), Some("test"));
+  }
+
+  #[test]
+  fn adds_test_to_existing_features() {
+    let toml = format!(
+      "{SCAFFOLD}\n[dev-dependencies]\ntauri = {{ version = \"2\", features = [\"tracing\"] }}\n"
+    );
+    let dep = tauri_dev_dep(&cargo_toml_with_harness(&toml).unwrap());
+    let features: Vec<_> = dep["features"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .filter_map(|v| v.as_str())
+      .collect();
+    assert_eq!(features, ["tracing", "test"]);
+  }
+
+  #[test]
+  fn reapplying_is_idempotent() {
+    let once = cargo_toml_with_harness(SCAFFOLD).unwrap();
+    assert_eq!(cargo_toml_with_harness(&once).unwrap(), once);
+  }
 }

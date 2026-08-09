@@ -24,6 +24,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # maintained serde_yaml fork (upstream archived); revisit serde-saphyr when it matures
 serde_norway = "0.9"
 schemars = "1"
+toml_edit = "0.23"
 similar = "2"
 walkdir = "2"
 log = "0.4"
