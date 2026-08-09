@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::error::{Error, Result};
+use crate::helpers;
 use crate::manifest::MutationRecord;
 use crate::tutorial::Tutorial;
 
@@ -20,12 +21,7 @@ pub fn apply_overlay(
     if !entry.file_type().is_file() {
       continue;
     }
-    let rel = entry
-      .path()
-      .strip_prefix(&overlay_dir)
-      .expect("walkdir yields children of its root")
-      .to_string_lossy()
-      .replace('\\', "/");
+    let rel = helpers::rel_slash(&overlay_dir, entry.path());
     let dest = work_dir.join(&rel);
     let before = dest
       .exists()
@@ -194,12 +190,7 @@ fn unified_diff(before: Option<&str>, after: &str, label: &str) -> String {
     ),
     Some(before) if before == after => String::new(),
     Some(before) => {
-      let diff = similar::TextDiff::from_lines(before, after);
-      diff
-        .unified_diff()
-        .context_radius(3)
-        .header(&format!("a/{label}"), &format!("b/{label}"))
-        .to_string()
+      helpers::unified_diff(before, after, &format!("a/{label}"), &format!("b/{label}"))
     }
   }
 }

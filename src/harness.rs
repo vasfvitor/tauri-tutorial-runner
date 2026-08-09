@@ -76,41 +76,34 @@ fn cargo_toml_with_harness(original: &str) -> Result<String> {
       Error::Runner("src-tauri/Cargo.toml: [dev-dependencies] is not a table".into())
     })?;
 
-  match dev.get_mut("tauri") {
-    None => {
-      let mut dep = InlineTable::new();
-      dep.insert("version", "2".into());
-      dep.insert("features", Value::Array(Array::from_iter(["test"])));
-      dev.insert("tauri", toml_edit::value(dep));
+  // absent and plain `tauri = "x"` both end as a fresh inline table (widened
+  // so the feature fits); a table-shaped dep just gains the feature
+  let plain_version = match dev.get("tauri") {
+    None => Some("2".to_string()),
+    Some(item) => item.as_str().map(str::to_string),
+  };
+  if let Some(version) = plain_version {
+    let mut dep = InlineTable::new();
+    dep.insert("version", version.into());
+    dep.insert("features", Value::Array(Array::from_iter(["test"])));
+    dev.insert("tauri", toml_edit::value(dep));
+  } else if let Some(dep) = dev.get_mut("tauri").and_then(Item::as_table_like_mut) {
+    let features = dep
+      .entry("features")
+      .or_insert(toml_edit::value(Array::new()))
+      .as_array_mut()
+      .ok_or_else(|| {
+        Error::Runner(
+          "src-tauri/Cargo.toml: dev-dependencies.tauri.features is not an array".into(),
+        )
+      })?;
+    if !features.iter().any(|v| v.as_str() == Some("test")) {
+      features.push("test");
     }
-    Some(existing) => {
-      if let Some(version) = existing.as_str().map(str::to_string) {
-        // plain `tauri = "x"` — widen to a table so the feature fits
-        let mut dep = InlineTable::new();
-        dep.insert("version", version.into());
-        dep.insert("features", Value::Array(Array::from_iter(["test"])));
-        *existing = toml_edit::value(dep);
-      } else if let Some(dep) = existing.as_table_like_mut() {
-        if dep.get("features").is_none() {
-          dep.insert("features", toml_edit::value(Array::new()));
-        }
-        let features = dep
-          .get_mut("features")
-          .and_then(Item::as_array_mut)
-          .ok_or_else(|| {
-            Error::Runner(
-              "src-tauri/Cargo.toml: dev-dependencies.tauri.features is not an array".into(),
-            )
-          })?;
-        if !features.iter().any(|v| v.as_str() == Some("test")) {
-          features.push("test");
-        }
-      } else {
-        return Err(Error::Runner(
-          "src-tauri/Cargo.toml: dev-dependencies.tauri has an unrecognized shape".into(),
-        ));
-      }
-    }
+  } else {
+    return Err(Error::Runner(
+      "src-tauri/Cargo.toml: dev-dependencies.tauri has an unrecognized shape".into(),
+    ));
   }
 
   // marker: greppable for the idempotence check and the manifest leak assertion

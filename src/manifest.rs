@@ -90,10 +90,7 @@ pub fn verify_expected(tutorial: &Tutorial) -> Result<()> {
   }
   print!(
     "{}",
-    similar::TextDiff::from_lines(&expected, &fresh)
-      .unified_diff()
-      .context_radius(3)
-      .header("expected.manifest.json", "fresh run")
+    crate::helpers::unified_diff(&expected, &fresh, "expected.manifest.json", "fresh run")
   );
   Err(Error::Runner(
     "manifest drifted from expected — review the diff, then `tatu bless` to accept it".into(),

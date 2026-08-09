@@ -44,7 +44,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
   };
 
   let mut failed = false;
-  let recorded_diffs = load_recorded_diffs(&tutorial.dir)?;
+  let recorded_diffs = load_recorded_diffs(tutorial)?;
 
   for step in &tutorial.steps {
     if let Some(only) = &options.only_step {
@@ -143,7 +143,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 // map when the tutorial has none yet (first authoring run)
 type RecordedDiffs = std::collections::HashMap<(String, String), String>;
 
-fn load_recorded_diffs(tutorial_dir: &Path) -> Result<RecordedDiffs> {
+fn load_recorded_diffs(tutorial: &Tutorial) -> Result<RecordedDiffs> {
   // expected.manifest.json is the normalized manifest (advisory/platform
   // stripped by `tatu bless`), so read only the fields the guard needs
   #[derive(serde::Deserialize)]
@@ -156,7 +156,7 @@ fn load_recorded_diffs(tutorial_dir: &Path) -> Result<RecordedDiffs> {
     mutations: Vec<MutationRecord>,
   }
 
-  let path = tutorial_dir.join("expected.manifest.json");
+  let path = tutorial.expected_manifest_path();
   let mut map = RecordedDiffs::new();
   if !path.exists() {
     return Ok(map);

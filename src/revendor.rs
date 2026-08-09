@@ -63,12 +63,12 @@ pub fn revendor(target: &Path) -> Result<()> {
   )?;
 
   let previous = snapshot(&target)?;
+  let fresh = snapshot(&scaffold)?;
   if target.exists() {
     fs::remove_dir_all(&target)?;
   }
-  fs::create_dir_all(&target)?;
   helpers::copy_dir(&scaffold, &target)?;
-  report(&previous, &snapshot(&target)?);
+  report(&previous, &fresh);
   println!("re-vendored {}", target.display());
   println!(
     "next: `tatu check` every tutorial using this base (the re-vendor guard reports overlay conflicts), review, then `tatu bless`"
@@ -126,13 +126,10 @@ fn snapshot(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     if !entry.file_type().is_file() {
       continue;
     }
-    let rel = entry
-      .path()
-      .strip_prefix(dir)
-      .expect("walkdir yields children of its root")
-      .to_string_lossy()
-      .replace('\\', "/");
-    map.insert(rel, fs::read(entry.path())?);
+    map.insert(
+      helpers::rel_slash(dir, entry.path()),
+      fs::read(entry.path())?,
+    );
   }
   Ok(map)
 }

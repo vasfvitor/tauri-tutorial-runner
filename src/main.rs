@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use tauri_tutorial_runner::error::{Error, Result};
 use tauri_tutorial_runner::runner::{run_tutorial, RunOptions};
 use tauri_tutorial_runner::tutorial::{load_tutorial, Tutorial};
-use tauri_tutorial_runner::{manifest, schema};
+use tauri_tutorial_runner::{manifest, revendor, schema};
 
 #[derive(Parser)]
 #[command(
@@ -108,7 +108,7 @@ fn run() -> Result<()> {
       load_and_announce(&dir)?;
       Ok(())
     }
-    Commands::Revendor { dir } => tauri_tutorial_runner::revendor::revendor(&dir),
+    Commands::Revendor { dir } => revendor::revendor(&dir),
     Commands::Verify { dir } => manifest::verify_expected(&load_and_announce(&dir)?),
     Commands::Bless { dir } => manifest::bless_expected(&load_and_announce(&dir)?),
     Commands::Schema { out, emit_ts } => {

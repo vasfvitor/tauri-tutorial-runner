@@ -3,6 +3,26 @@ use std::path::Path;
 
 use crate::error::Result;
 
+/// slash-normalized path of `path` relative to `root` — the one spelling of
+/// relative paths that records identically on Windows and Linux
+pub fn rel_slash(root: &Path, path: &Path) -> String {
+  path
+    .strip_prefix(root)
+    .expect("walkdir yields children of its root")
+    .to_string_lossy()
+    .replace('\\', "/")
+}
+
+/// the repo's one unified-diff rendering — recorded mutation diffs and the
+/// verify output are read side by side, so they must not drift in format
+pub fn unified_diff(old: &str, new: &str, old_label: &str, new_label: &str) -> String {
+  similar::TextDiff::from_lines(old, new)
+    .unified_diff()
+    .context_radius(3)
+    .header(old_label, new_label)
+    .to_string()
+}
+
 pub fn copy_dir(from: &Path, to: &Path) -> Result<()> {
   for entry in walkdir::WalkDir::new(from) {
     let entry = entry.map_err(|e| crate::error::Error::Runner(e.to_string()))?;
