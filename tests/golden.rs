@@ -5,7 +5,8 @@
 // rests on them. A wrong character here silently invalidates that evidence,
 // so the template must reproduce them byte-for-byte. If you change the
 // template deliberately, re-prove the greet tutorial first, then regenerate
-// the fixtures from the work tree — never edit them by hand.
+// the fixtures with `TATU_BLESS=1 cargo test --test golden` — never edit them
+// by hand.
 
 use std::path::Path;
 
@@ -56,6 +57,11 @@ fn generated_tests_match_proven_fixtures() {
     ),
   ];
 
+  // TATU_BLESS=1 accepts the current template output as the new fixtures —
+  // only after a live run has re-proven it; blessing an unproven template
+  // just locks in the drift
+  let bless = std::env::var_os("TATU_BLESS").is_some_and(|v| v != "0");
+
   for (step_id, phase, fixture) in fixtures {
     let step = tutorial
       .steps
@@ -63,13 +69,17 @@ fn generated_tests_match_proven_fixtures() {
       .find(|s| s.id == step_id)
       .expect("fixture step exists");
     let generated = generate(&tutorial, step, phase);
-    let golden = std::fs::read_to_string(
-      Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/generated")
-        .join(fixture),
-    )
-    .expect("fixture readable")
-    .replace("\r\n", "\n");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+      .join("tests/fixtures/generated")
+      .join(fixture);
+    let golden = std::fs::read_to_string(&path)
+      .expect("fixture readable")
+      .replace("\r\n", "\n");
+    if bless && generated != golden {
+      std::fs::write(&path, &generated).expect("fixture writable");
+      println!("blessed {fixture} from the current template");
+      continue;
+    }
     assert_eq!(
       generated, golden,
       "template drifted from proven output: {fixture}"
