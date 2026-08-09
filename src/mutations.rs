@@ -54,7 +54,7 @@ pub fn apply_json_merge(
   let target = work_dir.join(file);
   let before = fs::read_to_string(&target)?;
   let merged = deep_merge(serde_json::from_str(&before)?, merge);
-  let after = serde_json::to_string_pretty(&merged)? + "\n";
+  let after = to_json_matching_style(&merged, &before)?;
   fs::write(&target, &after)?;
   Ok(vec![MutationRecord {
     file: Some(file.to_string()),
@@ -101,6 +101,32 @@ pub fn shell_command(run: &str) -> Command {
     cmd.args(["-c", run]);
     cmd
   }
+}
+
+// the recorded diff must show the merge, not a reflow — match the target
+// file's own indentation and trailing-newline style
+fn to_json_matching_style(value: &serde_json::Value, original: &str) -> Result<String> {
+  use serde::Serialize;
+  let indent = detect_indent(original);
+  let mut buf = Vec::new();
+  let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+  let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);
+  value.serialize(&mut serializer)?;
+  let mut out = String::from_utf8(buf).expect("serde_json emits utf8");
+  if original.ends_with('\n') {
+    out.push('\n');
+  }
+  Ok(out)
+}
+
+fn detect_indent(text: &str) -> String {
+  text
+    .lines()
+    .find_map(|line| {
+      let ws: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+      (!ws.is_empty() && ws.len() < line.len()).then_some(ws)
+    })
+    .unwrap_or_else(|| "  ".to_string())
 }
 
 // objects merge recursively; arrays are a union (append missing entries) — the
@@ -180,7 +206,7 @@ fn unified_diff(before: Option<&str>, after: &str, label: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::overlay_reverted_lines;
+  use super::{overlay_reverted_lines, to_json_matching_style};
 
   const RECORDED: &str = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+new_line\n+added_line\n context2\n";
 
@@ -208,5 +234,28 @@ mod tests {
   #[test]
   fn header_minus_lines_ignored() {
     assert!(overlay_reverted_lines("", "--- a/x\n+++ b/x\n").is_empty());
+  }
+
+  #[test]
+  fn json_style_keeps_four_space_indent_and_missing_newline() {
+    let original = "{\n    \"a\": 1,\n    \"b\": {\n        \"c\": 2\n    }\n}";
+    let value: serde_json::Value = serde_json::from_str(original).unwrap();
+    assert_eq!(to_json_matching_style(&value, original).unwrap(), original);
+  }
+
+  #[test]
+  fn json_style_keeps_tabs_and_trailing_newline() {
+    let original = "{\n\t\"a\": 1\n}\n";
+    let value: serde_json::Value = serde_json::from_str(original).unwrap();
+    assert_eq!(to_json_matching_style(&value, original).unwrap(), original);
+  }
+
+  #[test]
+  fn json_style_defaults_to_two_spaces() {
+    let value: serde_json::Value = serde_json::from_str(r#"{"a":1}"#).unwrap();
+    assert_eq!(
+      to_json_matching_style(&value, "{}\n").unwrap(),
+      "{\n  \"a\": 1\n}\n"
+    );
   }
 }
