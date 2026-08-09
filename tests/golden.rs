@@ -61,6 +61,12 @@ fn generated_tests_match_proven_fixtures() {
   // only after a live run has re-proven it; blessing an unproven template
   // just locks in the drift
   let bless = std::env::var_os("TATU_BLESS").is_some_and(|v| v != "0");
+  // and never in CI, where a leaked variable would rubber-stamp that drift
+  // as a green run
+  assert!(
+    !(bless && std::env::var_os("CI").is_some()),
+    "TATU_BLESS must not be set in CI — bless locally after a live re-prove"
+  );
 
   for (step_id, phase, fixture) in fixtures {
     let step = tutorial
