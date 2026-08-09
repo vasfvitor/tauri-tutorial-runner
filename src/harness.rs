@@ -105,11 +105,27 @@ fn cargo_toml_with_harness(original: &str) -> Result<String> {
     ));
   }
 
-  // marker: greppable for the idempotence check and the manifest leak assertion
-  if let Some(value) = dev.get_mut("tauri").and_then(Item::as_value_mut) {
-    value
+  // marker: greppable for the idempotence check and the manifest leak
+  // assertion, so it must land for every shape — a `[dev-dependencies.tauri]`
+  // table is not a Value, and there the features array carries it
+  let tauri = dev.get_mut("tauri").expect("inserted or merged above");
+  let marked = if tauri.is_value() {
+    tauri.as_value_mut()
+  } else {
+    tauri
+      .as_table_like_mut()
+      .and_then(|dep| dep.get_mut("features"))
+      .and_then(Item::as_value_mut)
+  };
+  match marked {
+    Some(value) => value
       .decor_mut()
-      .set_suffix(" # tatu:harness — tauri::test is feature-gated");
+      .set_suffix(" # tatu:harness — tauri::test is feature-gated"),
+    None => {
+      return Err(Error::Runner(
+        "internal: could not attach the tatu:harness marker — this is a tatu bug".into(),
+      ))
+    }
   }
 
   Ok(doc.to_string())
@@ -393,5 +409,17 @@ mod tests {
   fn reapplying_is_idempotent() {
     let once = cargo_toml_with_harness(SCAFFOLD).unwrap();
     assert_eq!(cargo_toml_with_harness(&once).unwrap(), once);
+  }
+
+  // the marker must land for every dev-dep shape — without it the re-entry
+  // guard and the manifest leak assertion are both blind
+  #[test]
+  fn dotted_table_dev_dep_still_gets_the_marker() {
+    let toml = format!("{SCAFFOLD}\n[dev-dependencies.tauri]\nversion = \"2\"\n");
+    let out = cargo_toml_with_harness(&toml).unwrap();
+    assert!(out.contains("tatu:harness"), "marker missing: {out}");
+    let dep = tauri_dev_dep(&out);
+    assert_eq!(dep["version"].as_str(), Some("2"));
+    assert_eq!(dep["features"][0].as_str(), Some("test"));
   }
 }
