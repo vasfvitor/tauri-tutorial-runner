@@ -9,7 +9,9 @@ use crate::tutorial::Tutorial;
 /// The committed contract between the runner and consumers (tauri-docs
 /// components read this JSON — field names and order are load-bearing for the
 /// diff-review workflow, so keep struct order stable).
-pub const SCHEMA_VERSION: u32 = 1;
+/// v2: advisory/platform optional (stripped in blessed manifests), status
+/// value `skipped` removed.
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Manifest {
@@ -109,12 +111,46 @@ pub fn verify_expected(tutorial: &Tutorial) -> Result<()> {
 pub fn bless_expected(tutorial: &Tutorial) -> Result<()> {
   let raw = read(tutorial.out_manifest_path()?, "run the tutorial first")?;
   let manifest: Manifest = serde_json::from_str(&raw)?;
+  let declared: Vec<&str> = tutorial.steps.iter().map(|s| s.id.as_str()).collect();
+  check_blessable(&manifest, &declared)?;
   if manifest.advisory == Some(true) {
     println!("note: blessing an advisory (host) run — authoritative manifests come from `tatu run` in the container");
   }
   let expected = tutorial.expected_manifest_path();
   fs::write(&expected, render(&strip_run_environment(manifest))?)?;
   println!("wrote {}", expected.display());
+  Ok(())
+}
+
+// a baseline must come from a complete, green run — blessing a failed or
+// truncated manifest (a `--step` run, or a run that broke partway) would make
+// `tatu verify` vouch for a broken tutorial from then on
+fn check_blessable(manifest: &Manifest, declared_steps: &[&str]) -> Result<()> {
+  let failed: Vec<&str> = manifest
+    .steps
+    .iter()
+    .filter(|s| {
+      s.preconditions
+        .iter()
+        .chain(s.assertions.iter())
+        .any(|r| r.status == Status::Fail)
+    })
+    .map(|s| s.id.as_str())
+    .collect();
+  if !failed.is_empty() {
+    return Err(Error::Runner(format!(
+      "refusing to bless a failed run — failing step(s): {}",
+      failed.join(", ")
+    )));
+  }
+  let ran: Vec<&str> = manifest.steps.iter().map(|s| s.id.as_str()).collect();
+  if ran != declared_steps {
+    return Err(Error::Runner(format!(
+      "refusing to bless an incomplete run — the manifest covers [{}] but tutorial.yaml declares [{}]; re-run without --step",
+      ran.join(", "),
+      declared_steps.join(", ")
+    )));
+  }
   Ok(())
 }
 
@@ -135,7 +171,35 @@ pub fn platform() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-  use super::normalized;
+  use super::{check_blessable, normalized, Manifest};
+
+  fn manifest(json: &str) -> Manifest {
+    serde_json::from_str(json).unwrap()
+  }
+
+  const GREEN: &str = r#"{"schemaVersion":2,"id":"t","title":"T","steps":[
+    {"id":"one","task":"","mutations":[],"preconditions":[],
+     "assertions":[{"kind":"shell","status":"pass"}]},
+    {"id":"two","task":"","mutations":[],"preconditions":[],
+     "assertions":[{"kind":"shell","status":"pass"}]}]}"#;
+
+  #[test]
+  fn complete_green_run_is_blessable() {
+    assert!(check_blessable(&manifest(GREEN), &["one", "two"]).is_ok());
+  }
+
+  #[test]
+  fn failed_run_is_not_blessable() {
+    let failed = GREEN.replacen("\"pass\"", "\"fail\"", 1);
+    let err = check_blessable(&manifest(&failed), &["one", "two"]).unwrap_err();
+    assert!(err.to_string().contains("failed run"), "{err}");
+  }
+
+  #[test]
+  fn truncated_run_is_not_blessable() {
+    let err = check_blessable(&manifest(GREEN), &["one", "two", "three"]).unwrap_err();
+    assert!(err.to_string().contains("incomplete run"), "{err}");
+  }
 
   #[test]
   fn normalized_strips_run_environment_fields() {
