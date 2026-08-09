@@ -19,6 +19,14 @@ const DROPPED: [&str; 2] = [".gitignore", "README.md"];
 pub fn revendor(target: &Path) -> Result<()> {
   let target = std::path::absolute(target)?;
   let (template, version) = parse_base_name(&target)?;
+  // revendor deletes and rewrites the target — never point it anywhere but
+  // the pool
+  if target.parent().and_then(Path::file_name) != Some(std::ffi::OsStr::new("bases")) {
+    return Err(Error::Runner(format!(
+      "revendor only re-scaffolds pool bases — the target must be a directory under bases/, got {}",
+      target.display()
+    )));
+  }
 
   // require the exact CTA version so the dir name never lies about its content
   let installed = cta_version()?;
@@ -64,10 +72,23 @@ pub fn revendor(target: &Path) -> Result<()> {
 
   let previous = snapshot(&target)?;
   let fresh = snapshot(&scaffold)?;
+  // stage next to the target and swap by rename — a failed copy (file lock,
+  // full disk) must never leave the shared pool base half-written
+  let staging = target.with_file_name(format!(
+    "{}.revendor-staging",
+    target
+      .file_name()
+      .and_then(|n| n.to_str())
+      .expect("validated base name")
+  ));
+  if staging.exists() {
+    fs::remove_dir_all(&staging)?;
+  }
+  helpers::copy_dir(&scaffold, &staging)?;
   if target.exists() {
     fs::remove_dir_all(&target)?;
   }
-  helpers::copy_dir(&scaffold, &target)?;
+  fs::rename(&staging, &target)?;
   report(&previous, &fresh);
   println!("re-vendored {}", target.display());
   println!(
@@ -101,6 +122,14 @@ fn cta_version() -> Result<String> {
         "cannot run `cargo create-tauri-app` ({e}) — install it with `cargo install create-tauri-app --locked`"
       ))
     })?;
+  // cargo spawns fine even when the subcommand is missing — a nonzero exit
+  // must not be misread as a version mismatch
+  if !output.status.success() {
+    return Err(Error::Runner(format!(
+      "`cargo create-tauri-app --version` failed:\n{}install it with `cargo install create-tauri-app --locked`",
+      String::from_utf8_lossy(&output.stderr)
+    )));
+  }
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -171,5 +200,13 @@ mod tests {
   fn base_name_without_version_is_rejected() {
     assert!(parse_base_name(Path::new("bases/vanilla-ts")).is_err());
     assert!(parse_base_name(Path::new("bases/@4.7.3")).is_err());
+  }
+
+  // revendor deletes its target — a path outside bases/ must be refused
+  // before anything runs
+  #[test]
+  fn target_outside_bases_is_rejected() {
+    let err = super::revendor(Path::new("projects/foo@4.7.3")).unwrap_err();
+    assert!(err.to_string().contains("bases/"), "{err}");
   }
 }
