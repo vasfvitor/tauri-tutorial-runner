@@ -29,8 +29,8 @@ jobs:
       - id: list
         run: |
           tutorials=$(cd tutorials && for d in */; do
-            if [ -f "$d/tutorial.yaml" ]; then basename "$d"; fi
-          done | jq -R . | jq -sc .)
+            if [ -f "$d/tutorial.yaml" ]; then printf '%s\n' "${d%/}"; fi
+          done | jq -Rnc '[inputs]')
           echo "discovered: $tutorials"
           echo "tutorials=$tutorials" >> "$GITHUB_OUTPUT"
 
@@ -45,12 +45,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # compiled artifacts only — the crates.io registry deliberately stays
+      # out: the image bakes it, and caching it too would move the same bytes
+      # through the cache on every run
       - uses: actions/cache@v6
         with:
           path: |
             target
             .tatu/cargo-target
-            .tatu/cargo-home
           # unique key so every run saves (an exact hit skips the save, losing
           # whatever the tutorial compiled this time); restore picks the newest prefix match
           key: tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'bases/**/src-tauri/Cargo.lock') }}-${{ github.run_id }}
@@ -58,26 +60,32 @@ jobs:
             tutorials-${{ matrix.tutorial }}-${{ hashFiles('Dockerfile', 'Cargo.lock', 'bases/**/src-tauri/Cargo.lock') }}-
             tutorials-${{ matrix.tutorial }}-
 
-      # published by image.yml under the content hash of the image inputs; the
-      # local build is only the first-run fallback before that tag exists
+      - id: image
+        uses: ./.github/actions/runner-image
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # published by image.yml under the same ref; the local build is the
+      # first-run fallback before that tag exists — loud, because a silent
+      # fallback would hide a broken pin as a 10-minute rebuild per leg
       - name: Pull runner image
         timeout-minutes: 10
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}:env-${{ hashFiles('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'bases/**') }}"
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker pull "$IMAGE" || docker build -t "$IMAGE" .
+          IMAGE="${{ steps.image.outputs.image }}"
+          docker pull "$IMAGE" || {
+            echo "::warning::no published image for $IMAGE — building locally; check the image workflow"
+            docker build -t "$IMAGE" .
+          }
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       # the image bakes a pre-fetched crates.io registry for exactly the
-      # lockfiles this checkout carries — on a cold cache, start from it
-      # instead of downloading the graphs again
-      - name: Seed cargo registry from image (cold cache only)
+      # lockfiles this checkout carries — every job starts from it instead of
+      # downloading the graphs
+      - name: Seed cargo registry from image
         run: |
-          if [ ! -d .tatu/cargo-home/registry ]; then
-            mkdir -p .tatu/cargo-home
-            docker run --rm -v "$PWD:/work" "$IMAGE" \
-              cp -a /usr/local/cargo/registry /work/.tatu/cargo-home/
-          fi
+          mkdir -p .tatu/cargo-home
+          docker run --rm -v "$PWD:/work" "$IMAGE" \
+            cp -a /usr/local/cargo/registry /work/.tatu/cargo-home/
 
       - name: Run tutorial (authoritative)
         timeout-minutes: 45

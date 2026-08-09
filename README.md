@@ -95,9 +95,10 @@ Iterate with `tatu check tutorials/<id>` until green, then run an authoritative
 - `tutorials` runs every tutorial in the pinned container, weekly and on manual
   dispatch, and compares each manifest against the committed expected one
   (`tatu verify`). A red step means the tutorial, or Tauri underneath it, broke.
-- `image` publishes the container image to GHCR whenever the `Dockerfile`
-  changes, tagged with the Dockerfile's content hash; `tutorials` pulls that
-  tag and builds locally only when it has not been published yet.
+- `image` publishes the container image to GHCR whenever its inputs change,
+  tagged with the content hash of those inputs (the `Dockerfile` plus the
+  lockfiles whose dep graphs it pre-fetches); `tutorials` pulls that tag and
+  builds locally only when it has not been published yet.
 
 ## Prerequisites
 

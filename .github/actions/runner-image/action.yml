@@ -1,0 +1,28 @@
+name: runner-image
+description: >
+  The one home of the pinned runner-image reference. The tag hashes exactly
+  the inputs that shape the image's content: the Dockerfile and the lockfiles
+  whose dep graphs it pre-fetches (the bases are COPYed wholesale, but only
+  their src-tauri manifests survive into the baked registry). image.yml
+  publishes under this ref; tutorials.yml pulls it.
+
+inputs:
+  token:
+    description: GITHUB_TOKEN, for the GHCR login
+    required: true
+
+outputs:
+  image:
+    description: fully qualified pinned image reference
+    value: ${{ steps.ref.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - id: ref
+      shell: bash
+      run: >
+        echo "image=ghcr.io/${{ github.repository }}:env-${{ hashFiles('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'bases/**/src-tauri/Cargo.toml', 'bases/**/src-tauri/Cargo.lock') }}"
+        >> "$GITHUB_OUTPUT"
+    - shell: bash
+      run: echo "${{ inputs.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin

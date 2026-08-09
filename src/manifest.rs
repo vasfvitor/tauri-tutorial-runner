@@ -166,7 +166,9 @@ mod tests {
       if !path.exists() {
         continue;
       }
-      let text = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+      let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("\r\n", "\n");
       assert_eq!(normalized(&text).unwrap(), text, "{}", path.display());
       seen += 1;
     }

@@ -1,10 +1,10 @@
 name: image
 
 # Publishes the pinned runner image to GHCR. The tag is the content hash of
-# everything that shapes the image — the Dockerfile plus the lockfiles whose
-# dep graphs it pre-fetches — so the tutorials workflow pulls exactly the
-# image its checkout describes. Re-run via dispatch to refresh apt package
-# state under the same tag when none of those inputs changed.
+# the image's inputs — owned by .github/actions/runner-image, shared with the
+# tutorials workflow so the published and pulled refs cannot drift. Re-run via
+# dispatch to refresh apt package state under the same tag when none of those
+# inputs changed.
 
 on:
   workflow_dispatch:
@@ -14,8 +14,10 @@ on:
       - Dockerfile
       - Cargo.toml
       - Cargo.lock
-      - bases/**
+      - bases/**/src-tauri/Cargo.toml
+      - bases/**/src-tauri/Cargo.lock
       - .github/workflows/image.yml
+      - .github/actions/runner-image/**
 
 permissions:
   contents: read
@@ -27,13 +29,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      - id: image
+        uses: ./.github/actions/runner-image
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}"
-          # must match the pull expression in tutorials.yml
-          TAG="env-${{ hashFiles('Dockerfile', 'Cargo.toml', 'Cargo.lock', 'bases/**') }}"
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
-          docker push "$IMAGE:$TAG"
-          docker push "$IMAGE:latest"
-          docker inspect --format='pushed {{index .RepoDigests 0}}' "$IMAGE:$TAG"
+          IMAGE="${{ steps.image.outputs.image }}"
+          LATEST="ghcr.io/${{ github.repository }}:latest"
+          # dispatch exists to refresh apt state — skip the layer cache there;
+          # pushes reuse the previous image's layers so a lockfile-only change
+          # rebuilds only the cargo-fetch layer
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CACHE_ARGS="--no-cache"
+          else
+            docker pull "$LATEST" || true
+            CACHE_ARGS="--cache-from $LATEST --build-arg BUILDKIT_INLINE_CACHE=1"
+          fi
+          docker build $CACHE_ARGS -t "$IMAGE" -t "$LATEST" .
+          docker push "$IMAGE"
+          docker push "$LATEST"
+          docker inspect --format='pushed {{index .RepoDigests 0}}' "$IMAGE"
