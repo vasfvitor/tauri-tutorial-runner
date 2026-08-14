@@ -1,0 +1,161 @@
+# tatu tutorial — schema v0
+# Mirrors the tauri-docs "Splashscreen" lab: a hidden main window plus a
+# splashscreen window that closes once frontend and backend setup complete.
+id: splashscreen
+title: Show a splashscreen while the app performs setup
+meta:
+  difficulty: beginner
+  time: 20min
+  platforms: [windows, macos, linux]
+
+base:
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
+  fixture: ../../bases/vanilla-ts@4.7.3
+
+steps:
+  - id: install-dependencies
+    task: >
+      Install the frontend dependencies and confirm the scaffold builds and
+      answers over IPC before changing anything.
+    mutations:
+      - engine: shell
+        run: pnpm install --no-frozen-lockfile
+    harness:
+      prelude: |
+        #[tauri::command]
+        fn greet(name: &str) -> String {
+            format!("Hello, {}! You've been greeted from Rust!", name)
+        }
+      handlers: [greet]
+    assertions:
+      - kind: shell
+        run: pnpm build
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: register-windows
+    task: >
+      Register the windows in `tauri.conf.json`: a window labeled `main`
+      created hidden, and a window labeled `splashscreen` shown directly,
+      loading the `/splashscreen` URL. Leave the other options at their
+      defaults.
+    mutations:
+      - engine: overlay
+    harness:
+      prelude: |
+        #[tauri::command]
+        fn greet(name: &str) -> String {
+            format!("Hello, {}! You've been greeted from Rust!", name)
+        }
+      handlers: [greet]
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        setup: |
+          let windows = &app.config().app.windows;
+          assert_eq!(windows.len(), 2, "expected the main and splashscreen windows");
+          let main = windows.iter().find(|w| w.label == "main").expect("a window labeled main");
+          assert!(!main.visible, "the main window must start hidden");
+          let splash = windows.iter().find(|w| w.label == "splashscreen").expect("a window labeled splashscreen");
+          assert!(
+              matches!(&splash.url, tauri::WebviewUrl::App(p) if p.to_str() == Some("/splashscreen")),
+              "the splashscreen window must load /splashscreen"
+          );
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: splashscreen-page
+    task: >
+      Create a `/splashscreen` page for the splashscreen window to load:
+      a `splashscreen.html` next to `index.html`, and whatever build
+      configuration is needed for `pnpm build` to emit it into `dist/` —
+      the production app must be able to load it, not only the dev server.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: shell
+        run: pnpm build
+      - kind: shell
+        # the splashscreen page must survive a production build
+        run: 'node -e "process.exit(require(''fs'').existsSync(''dist/splashscreen.html'') ? 0 : 1)"'
+
+  - id: setup-tasks
+    task: >
+      Fake a heavy setup task on each side: a `setTimeout`-based task in the
+      frontend and a Tokio sleep in the backend. Track both in a shared
+      `SetupState` behind a `set_complete` command; when both sides report
+      done, close the splashscreen window and show the main window.
+    mutations:
+      - engine: shell
+        run: cargo add tokio -F time
+        cwd: src-tauri
+      - engine: overlay
+    harness:
+      # test-side copies of the app's state and commands; `set_complete` is
+      # generic over the runtime so it also compiles for MockRuntime
+      # (the app's own lib.rs keeps the concrete AppHandle — tauri#12077)
+      prelude: |
+        use std::sync::Mutex;
+        use tauri::{AppHandle, Runtime, State};
+
+        struct SetupState {
+            frontend_task: bool,
+            backend_task: bool,
+        }
+
+        #[tauri::command]
+        fn greet(name: String) -> String {
+            format!("Hello {name} from Rust!")
+        }
+
+        #[tauri::command]
+        async fn set_complete<R: Runtime>(
+            app: AppHandle<R>,
+            state: State<'_, Mutex<SetupState>>,
+            task: String,
+        ) -> Result<(), ()> {
+            let mut state_lock = state.lock().unwrap();
+            match task.as_str() {
+                "frontend" => state_lock.frontend_task = true,
+                "backend" => state_lock.backend_task = true,
+                _ => panic!("invalid task completed!"),
+            }
+            if state_lock.backend_task && state_lock.frontend_task {
+                let splash_window = app.get_webview_window("splashscreen").unwrap();
+                let main_window = app.get_webview_window("main").unwrap();
+                splash_window.close().unwrap();
+                main_window.show().unwrap();
+            }
+            Ok(())
+        }
+      handlers: [greet, set_complete]
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello Tauri from Rust!" }
+      - kind: ipc-local
+        # one side done: the state flips but no window is touched yet
+        command: set_complete
+        args: { task: "frontend" }
+        setup: |
+          app.manage(Mutex::new(SetupState {
+              frontend_task: false,
+              backend_task: false,
+          }));
+        expect: { ok: null }
+      - kind: ipc-local
+        # both sides done: the splashscreen closes and main is shown
+        command: set_complete
+        args: { task: "frontend" }
+        setup: |
+          app.manage(Mutex::new(SetupState {
+              frontend_task: false,
+              backend_task: true,
+          }));
+          tauri::WebviewWindowBuilder::new(&app, "splashscreen", Default::default())
+              .build()
+              .unwrap();
+        expect: { ok: null }
