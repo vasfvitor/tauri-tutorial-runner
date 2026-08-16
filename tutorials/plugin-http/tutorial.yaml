@@ -46,13 +46,12 @@ steps:
   - id: add-js-bindings
     task: >
       Install the JavaScript guest bindings package with the project's package
-      manager, then make sure the frontend still builds.
+      manager.
     mutations:
+      # a failed install fails the run; the package is only imported (and the
+      # frontend build only gated) at the usage step
       - engine: shell
         run: pnpm add @tauri-apps/plugin-http
-    assertions:
-      - kind: shell
-        run: pnpm build
 
   - id: configure-scope
     task: >
@@ -64,7 +63,7 @@ steps:
       # the ACL denies the fetch command entirely until a permission grants it
       - kind: ipc-acl
         command: plugin:http|fetch
-        args:
+        args: &in_scope_fetch
           clientConfig:
             method: GET
             url: "https://test.tauri.app/data.json"
@@ -81,14 +80,11 @@ steps:
               deny:
                 - url: "https://private.tauri.app"
     assertions:
+      # same request as the precondition — only the granted permission changed;
+      # fetch answers with a resource id, random by design, so success is the assertion
       - kind: ipc-acl
         command: plugin:http|fetch
-        args:
-          clientConfig:
-            method: GET
-            url: "https://test.tauri.app/data.json"
-            headers: []
-        # fetch answers with a resource id, random by design — success is the assertion
+        args: *in_scope_fetch
         expect: succeeds
       # the deny entry wins over the allow wildcard
       - kind: ipc-acl
@@ -126,12 +122,8 @@ steps:
     mutations:
       - engine: overlay
     harness:
+      # appends to the tutorial prelude; handlers replace to pick up the command
       prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-
         #[tauri::command]
         async fn fetch_status(url: String) -> Result<u16, String> {
             let res = tauri_plugin_http::reqwest::get(&url)
@@ -140,7 +132,6 @@ steps:
             Ok(res.status().as_u16())
         }
       handlers: [greet, fetch_status]
-      plugins: [tauri_plugin_http]
     assertions:
       - kind: ipc-local
         command: fetch_status

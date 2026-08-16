@@ -52,6 +52,7 @@
       ]
     },
     "Harness": {
+      "description": "A step-level harness inherits from the tutorial-level one per field:\n`handlers`/`plugins` replace when present, `prelude` appends — a step\nusually adds a command or swaps a plugin, not a fresh world.",
       "type": "object",
       "properties": {
         "prelude": {
@@ -72,7 +73,7 @@
           }
         },
         "plugins": {
-          "description": "plugin crates registered on the mock builder (`<name>::init()`)",
+          "description": "plugins registered on the mock builder: a bare crate name gets\n`::init()`, an entry with a call (`crate::Builder::default().build()`)\nis used verbatim",
           "type": [
             "array",
             "null"
@@ -207,9 +208,18 @@
       ]
     },
     "ExpectKeyword": {
-      "type": "string",
-      "enum": [
-        "denied"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "denied"
+          ]
+        },
+        {
+          "description": "the command must succeed but its value is not compared — for commands\nreturning a resource id, which is random by design",
+          "type": "string",
+          "const": "succeeds"
+        }
       ]
     },
     "Mutation": {

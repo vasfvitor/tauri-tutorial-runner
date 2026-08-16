@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use tauri_tutorial_runner::harness::{generate_ipc_test_file, sanitize, IpcCase};
-use tauri_tutorial_runner::tutorial::{load_tutorial, Step, Tutorial};
+use tauri_tutorial_runner::tutorial::{load_tutorial, Harness, Step, Tutorial};
 
 fn generate(tutorial: &Tutorial, step: &Step, phase: &str) -> String {
   let list = match phase {
@@ -30,33 +30,41 @@ fn generate(tutorial: &Tutorial, step: &Step, phase: &str) -> String {
       assertion: a,
     })
     .collect();
-  generate_ipc_test_file(step.harness.as_ref().or(tutorial.harness.as_ref()), &cases)
+  let harness = Harness::resolve(step.harness.as_ref(), tutorial.harness.as_ref());
+  generate_ipc_test_file(harness.as_ref(), &cases)
+}
+
+fn check_fixtures(tutorial: &Tutorial, fixtures: &[(&str, &str, &str)], bless: bool) {
+  for (step_id, phase, fixture) in fixtures {
+    let step = tutorial
+      .steps
+      .iter()
+      .find(|s| s.id == *step_id)
+      .expect("fixture step exists");
+    let generated = generate(tutorial, step, phase);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+      .join("tests/fixtures/generated")
+      .join(fixture);
+    let golden = match std::fs::read_to_string(&path) {
+      Ok(s) => s.replace("\r\n", "\n"),
+      // a fixture being added for the first time only exists under bless
+      Err(_) if bless => String::new(),
+      Err(e) => panic!("fixture {fixture} unreadable: {e}"),
+    };
+    if bless && generated != golden {
+      std::fs::write(&path, &generated).expect("fixture writable");
+      println!("blessed {fixture} from the current template");
+      continue;
+    }
+    assert_eq!(
+      generated, golden,
+      "template drifted from proven output: {fixture}"
+    );
+  }
 }
 
 #[test]
 fn generated_tests_match_proven_fixtures() {
-  let tutorial = load_tutorial(
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("tutorials/greet-command")
-      .as_path(),
-  )
-  .expect("greet tutorial loads");
-
-  let fixtures = [
-    ("verify-greet", "step", "tatu_step_verify_greet.rs"),
-    ("add-fs-plugin", "step", "tatu_step_add_fs_plugin.rs"),
-    (
-      "grant-fs-permission",
-      "pre",
-      "tatu_pre_grant_fs_permission.rs",
-    ),
-    (
-      "grant-fs-permission",
-      "step",
-      "tatu_step_grant_fs_permission.rs",
-    ),
-  ];
-
   // TATU_BLESS=1 accepts the current template output as the new fixtures —
   // only after a live run has re-proven it; blessing an unproven template
   // just locks in the drift
@@ -68,27 +76,45 @@ fn generated_tests_match_proven_fixtures() {
     "TATU_BLESS must not be set in CI — bless locally after a live re-prove"
   );
 
-  for (step_id, phase, fixture) in fixtures {
-    let step = tutorial
-      .steps
-      .iter()
-      .find(|s| s.id == step_id)
-      .expect("fixture step exists");
-    let generated = generate(&tutorial, step, phase);
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/generated")
-      .join(fixture);
-    let golden = std::fs::read_to_string(&path)
-      .expect("fixture readable")
-      .replace("\r\n", "\n");
-    if bless && generated != golden {
-      std::fs::write(&path, &generated).expect("fixture writable");
-      println!("blessed {fixture} from the current template");
-      continue;
-    }
-    assert_eq!(
-      generated, golden,
-      "template drifted from proven output: {fixture}"
-    );
-  }
+  let greet = load_tutorial(
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+      .join("tutorials/greet-command")
+      .as_path(),
+  )
+  .expect("greet tutorial loads");
+  check_fixtures(
+    &greet,
+    &[
+      ("verify-greet", "step", "tatu_step_verify_greet.rs"),
+      ("add-fs-plugin", "step", "tatu_step_add_fs_plugin.rs"),
+      (
+        "grant-fs-permission",
+        "pre",
+        "tatu_pre_grant_fs_permission.rs",
+      ),
+      (
+        "grant-fs-permission",
+        "step",
+        "tatu_step_grant_fs_permission.rs",
+      ),
+    ],
+    bless,
+  );
+
+  // plugin-store's permissions phases lock the builder-form plugin line, the
+  // step/tutorial harness inheritance and the `succeeds` expect block
+  let store = load_tutorial(
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+      .join("tutorials/plugin-store")
+      .as_path(),
+  )
+  .expect("plugin-store tutorial loads");
+  check_fixtures(
+    &store,
+    &[
+      ("permissions", "pre", "tatu_pre_store_permissions.rs"),
+      ("permissions", "step", "tatu_step_store_permissions.rs"),
+    ],
+    bless,
+  );
 }

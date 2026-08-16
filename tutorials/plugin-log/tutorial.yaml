@@ -47,13 +47,12 @@ steps:
   - id: add-js-bindings
     task: >
       Install the JavaScript guest bindings package with the project's package
-      manager, then make sure the frontend still builds.
+      manager.
     mutations:
+      # a failed install fails the run; the package is only imported (and the
+      # frontend build only gated) at the usage step
       - engine: shell
         run: pnpm add @tauri-apps/plugin-log
-    assertions:
-      - kind: shell
-        run: pnpm build
 
   - id: usage-js
     task: >
@@ -70,12 +69,8 @@ steps:
       Let the frontend log: the log command must be denied before the
       capability grants the permission and succeed after.
     harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
+      # inherits the tutorial prelude/handlers; only the phases that actually
+      # run a log command register the process-global logger
       plugins: ["tauri_plugin_log::Builder::new().build()"]
     preconditions:
       # the teaching beat: the ACL denies plugin commands until granted

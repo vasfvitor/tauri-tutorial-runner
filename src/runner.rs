@@ -11,7 +11,7 @@ use crate::manifest::{platform, Manifest, MutationRecord, ResultRecord, Status, 
 use crate::mutations::{
   apply_json_merge, apply_overlay, apply_shell, overlay_reverted_lines, shell_command,
 };
-use crate::tutorial::{Assertion, AssertionKind, Mutation, Step, Tutorial};
+use crate::tutorial::{Assertion, AssertionKind, Harness, Mutation, Step, Tutorial};
 
 pub struct RunOptions {
   pub authoritative: bool,
@@ -209,7 +209,7 @@ fn run_assertion_phase(
   if !ipc.is_empty() {
     let guard = apply_harness(work_dir)?;
     let test_name = format!("tatu_{phase}_{}", sanitize(&step.id));
-    let harness = step.harness.as_ref().or(tutorial.harness.as_ref());
+    let harness = Harness::resolve(step.harness.as_ref(), tutorial.harness.as_ref());
     let cases: Vec<IpcCase<'_>> = ipc
       .iter()
       .enumerate()
@@ -221,7 +221,7 @@ fn run_assertion_phase(
         assertion: a,
       })
       .collect();
-    let source = generate_ipc_test_file(harness, &cases);
+    let source = generate_ipc_test_file(harness.as_ref(), &cases);
     let test_path = work_dir
       .join("src-tauri")
       .join("tests")

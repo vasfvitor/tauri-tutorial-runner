@@ -4,8 +4,6 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-// In Rust the plugin re-exports the reqwest crate; refer to the reqwest docs
-// for the full API.
 #[tauri::command]
 async fn fetch_status(url: String) -> Result<u16, String> {
     let res = tauri_plugin_http::reqwest::get(&url)

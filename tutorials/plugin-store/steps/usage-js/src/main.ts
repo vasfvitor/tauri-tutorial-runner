@@ -32,7 +32,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const val = await store.get<{ value: number }>("some-key");
   console.log(val); // { value: 5 }
 
-  // You can manually save the store after making changes.
-  // Otherwise, it will save upon graceful exit as described above.
+  // You can manually save the store after making changes;
+  // otherwise it saves upon graceful exit.
   await store.save();
 });

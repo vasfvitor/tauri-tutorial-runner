@@ -41,13 +41,12 @@ steps:
   - id: add-js-bindings
     task: >
       Install the JavaScript guest bindings package with the project's package
-      manager, then make sure the frontend still builds.
+      manager.
     mutations:
+      # a failed install fails the run; the package is only imported (and the
+      # frontend build only gated) at the usage step
       - engine: shell
         run: pnpm add @tauri-apps/plugin-sql
-    assertions:
-      - kind: shell
-        run: pnpm build
 
   - id: select-engine
     task: >
@@ -108,11 +107,6 @@ steps:
       # the mock app registers the plugin with the same migrations as the app,
       # so the allow-side load exercises them for real
       prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-
         fn sql_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
@@ -126,7 +120,6 @@ steps:
                 )
                 .build()
         }
-      handlers: [greet]
       plugins: ["sql_plugin()"]
     preconditions:
       # the teaching beat: the ACL denies plugin commands until granted

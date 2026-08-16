@@ -46,13 +46,12 @@ steps:
   - id: add-js-bindings
     task: >
       Install the JavaScript guest bindings package with the project's package
-      manager, then make sure the frontend still builds.
+      manager.
     mutations:
+      # a failed install fails the run; the package is only imported (and the
+      # frontend build only gated) at the usage step
       - engine: shell
         run: pnpm add @tauri-apps/plugin-store
-    assertions:
-      - kind: shell
-        run: pnpm build
 
   - id: usage-js
     task: >

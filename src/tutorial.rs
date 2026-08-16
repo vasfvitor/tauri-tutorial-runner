@@ -34,6 +34,9 @@ pub struct Base {
   pub fixture: String,
 }
 
+/// A step-level harness inherits from the tutorial-level one per field:
+/// `handlers`/`plugins` replace when present, `prelude` appends — a step
+/// usually adds a command or swaps a plugin, not a fresh world.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Harness {
@@ -48,6 +51,26 @@ pub struct Harness {
   /// is used verbatim
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub plugins: Option<Vec<String>>,
+}
+
+impl Harness {
+  /// Resolve the harness for an assertion phase from the step- and
+  /// tutorial-level declarations, applying the field-level inheritance the
+  /// struct doc describes.
+  pub fn resolve(step: Option<&Harness>, tutorial: Option<&Harness>) -> Option<Harness> {
+    match (step, tutorial) {
+      (None, tutorial) => tutorial.cloned(),
+      (Some(step), None) => Some(step.clone()),
+      (Some(step), Some(tutorial)) => Some(Harness {
+        prelude: match (tutorial.prelude.as_deref(), step.prelude.as_deref()) {
+          (Some(t), Some(s)) => Some(format!("{t}\n{s}")),
+          (t, s) => s.or(t).map(str::to_string),
+        },
+        handlers: step.handlers.clone().or_else(|| tutorial.handlers.clone()),
+        plugins: step.plugins.clone().or_else(|| tutorial.plugins.clone()),
+      }),
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
