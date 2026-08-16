@@ -1,0 +1,148 @@
+# tatu tutorial — schema v0
+# Mirrors the tauri-docs "SQL" plugin page on its SQLite path: install the
+# plugin, pick the engine, use it from JavaScript, define migrations, preload
+# the database and grant the capability permissions.
+id: plugin-sql
+title: Install and use the sql plugin (SQLite)
+meta:
+  difficulty: beginner
+  time: 15min
+  platforms: [windows, macos, linux]
+
+base:
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
+  fixture: ../../bases/vanilla-ts@4.7.3
+
+harness:
+  prelude: |
+    #[tauri::command]
+    fn greet(name: &str) -> String {
+        format!("Hello, {}! You've been greeted from Rust!", name)
+    }
+  handlers: [greet]
+  plugins: ["tauri_plugin_sql::Builder::default().build()"]
+
+steps:
+  - id: add-cargo-dep
+    task: >
+      Add the tauri-plugin-sql crate to the Rust backend's dependencies in
+      `src-tauri/Cargo.toml`.
+    mutations:
+      - engine: shell
+        run: cargo add tauri-plugin-sql
+        cwd: src-tauri
+
+  - id: register-plugin
+    task: >
+      Register the sql plugin with the app builder in `lib.rs`.
+    mutations:
+      - engine: overlay
+
+  - id: add-js-bindings
+    task: >
+      Install the JavaScript guest bindings package with the project's package
+      manager, then make sure the frontend still builds.
+    mutations:
+      - engine: shell
+        run: pnpm add @tauri-apps/plugin-sql
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: select-engine
+    task: >
+      Enable the SQLite driver: the plugin compiles a database engine only
+      when its Cargo feature is enabled. The backend must build with the
+      plugin registered.
+    mutations:
+      - engine: shell
+        run: cargo add tauri-plugin-sql --features sqlite
+        cwd: src-tauri
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: usage-js
+    task: >
+      From the frontend, load `sqlite:test.db` and run an INSERT with the "$#"
+      substitution syntax. The TypeScript build must stay green.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: add-migrations
+    task: >
+      Define an initial migration creating a `todos` table and register it on
+      the plugin builder for the `sqlite:test.db` connection. The backend must
+      keep compiling.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: add-preload
+    task: >
+      Apply the migrations when the app starts by preloading the database
+      connection in `tauri.conf.json`.
+    mutations:
+      - engine: json-merge
+        file: src-tauri/tauri.conf.json
+        merge:
+          plugins:
+            sql:
+              preload: ["sqlite:test.db"]
+
+  - id: permissions
+    task: >
+      Let the frontend use the database: loading it from the webview must be
+      denied before the capability grants the sql permissions and succeed
+      after — and loading applies the migrations.
+    harness:
+      # the mock app registers the plugin with the same migrations as the app,
+      # so the allow-side load exercises them for real
+      prelude: |
+        #[tauri::command]
+        fn greet(name: &str) -> String {
+            format!("Hello, {}! You've been greeted from Rust!", name)
+        }
+
+        fn sql_plugin<R: tauri::Runtime>() -> impl tauri::plugin::Plugin<R> {
+            tauri_plugin_sql::Builder::default()
+                .add_migrations(
+                    "sqlite:test.db",
+                    vec![tauri_plugin_sql::Migration {
+                        version: 1,
+                        description: "create_initial_tables",
+                        sql: "CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT, status TEXT);",
+                        kind: tauri_plugin_sql::MigrationKind::Up,
+                    }],
+                )
+                .build()
+        }
+      handlers: [greet]
+      plugins: ["sql_plugin()"]
+    preconditions:
+      # the teaching beat: the ACL denies plugin commands until granted
+      - kind: ipc-acl
+        command: plugin:sql|load
+        args: { db: "sqlite:test.db" }
+        expect: denied
+    mutations:
+      - engine: json-merge
+        file: src-tauri/capabilities/default.json
+        merge:
+          permissions:
+            - "sql:default"
+            - "sql:allow-execute"
+    assertions:
+      - kind: ipc-acl
+        command: plugin:sql|load
+        args: { db: "sqlite:test.db" }
+        expect: { ok: "sqlite:test.db" }

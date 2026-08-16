@@ -1,0 +1,96 @@
+# tatu tutorial — schema v0
+# Mirrors the tauri-docs "Logging" plugin page: install the plugin, register
+# it, log from JavaScript and grant the capability permission.
+id: plugin-log
+title: Install and use the log plugin
+meta:
+  difficulty: beginner
+  time: 10min
+  platforms: [windows, macos, linux]
+
+base:
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
+  fixture: ../../bases/vanilla-ts@4.7.3
+
+# no plugins here: the log plugin installs a process-global logger, so the
+# mock app registers it only where a log command actually runs
+harness:
+  prelude: |
+    #[tauri::command]
+    fn greet(name: &str) -> String {
+        format!("Hello, {}! You've been greeted from Rust!", name)
+    }
+  handlers: [greet]
+
+steps:
+  - id: add-cargo-dep
+    task: >
+      Add the tauri-plugin-log crate to the Rust backend's dependencies in
+      `src-tauri/Cargo.toml`.
+    mutations:
+      - engine: shell
+        run: cargo add tauri-plugin-log
+        cwd: src-tauri
+
+  - id: register-plugin
+    task: >
+      Register the log plugin with the app builder in `lib.rs`. The
+      scaffold's `greet` command must keep working.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: add-js-bindings
+    task: >
+      Install the JavaScript guest bindings package with the project's package
+      manager, then make sure the frontend still builds.
+    mutations:
+      - engine: shell
+        run: pnpm add @tauri-apps/plugin-log
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: usage-js
+    task: >
+      Produce log records from the frontend with the plugin's `trace`, `info`
+      and `error` APIs. The TypeScript build must stay green.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: permissions
+    task: >
+      Let the frontend log: the log command must be denied before the
+      capability grants the permission and succeed after.
+    harness:
+      prelude: |
+        #[tauri::command]
+        fn greet(name: &str) -> String {
+            format!("Hello, {}! You've been greeted from Rust!", name)
+        }
+      handlers: [greet]
+      plugins: ["tauri_plugin_log::Builder::new().build()"]
+    preconditions:
+      # the teaching beat: the ACL denies plugin commands until granted
+      - kind: ipc-acl
+        command: plugin:log|log
+        args: { level: 3, message: "hello from the webview" }
+        expect: denied
+    mutations:
+      - engine: json-merge
+        file: src-tauri/capabilities/default.json
+        merge:
+          permissions:
+            - "log:default"
+    assertions:
+      - kind: ipc-acl
+        command: plugin:log|log
+        args: { level: 3, message: "hello from the webview" }
+        expect: { ok: null }

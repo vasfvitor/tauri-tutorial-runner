@@ -199,12 +199,21 @@ pub fn generate_ipc_test_file(harness: Option<&Harness>, cases: &[IpcCase<'_>]) 
   };
   let harness = harness.unwrap_or(&empty);
 
+  // a bare crate name gets the conventional `init()`; an entry carrying a
+  // call (e.g. `tauri_plugin_store::Builder::default().build()`) is verbatim,
+  // for plugins that only expose a builder
   let plugin_lines = harness
     .plugins
     .as_deref()
     .unwrap_or_default()
     .iter()
-    .map(|p| format!("        .plugin({p}::init())"))
+    .map(|p| {
+      if p.contains('(') {
+        format!("        .plugin({p})")
+      } else {
+        format!("        .plugin({p}::init())")
+      }
+    })
     .collect::<Vec<_>>()
     .join("\n");
   let handler_list = harness.handlers.as_deref().unwrap_or_default().join(", ");
@@ -302,6 +311,9 @@ fn expect_block(expect: &Expect) -> String {
     assert!(msg.contains("not allowed"), "expected ACL denial, got: {msg}");"#
         .to_string()
     }
+    Expect::Keyword(ExpectKeyword::Succeeds) => {
+      r#"    res.expect("expected the command to succeed");"#.to_string()
+    }
     Expect::Ok { ok } => format!(
       r##"{NORMALIZE}
     let value: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text.clone()));
@@ -351,7 +363,26 @@ fn json_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::cargo_toml_with_harness;
+  use super::{cargo_toml_with_harness, generate_ipc_test_file};
+  use crate::tutorial::Harness;
+
+  #[test]
+  fn builder_plugin_entries_are_emitted_verbatim() {
+    let harness = Harness {
+      prelude: None,
+      handlers: None,
+      plugins: Some(vec![
+        "tauri_plugin_http".into(),
+        "tauri_plugin_store::Builder::default().build()".into(),
+      ]),
+    };
+    let out = generate_ipc_test_file(Some(&harness), &[]);
+    assert!(out.contains(".plugin(tauri_plugin_http::init())"), "{out}");
+    assert!(
+      out.contains(".plugin(tauri_plugin_store::Builder::default().build())"),
+      "{out}"
+    );
+  }
 
   const SCAFFOLD: &str = "[package]\nname = \"tatu-app\"\n\n[dependencies]\ntauri = { version = \"2\", features = [] }\n";
 

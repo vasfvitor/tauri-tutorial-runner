@@ -1,0 +1,101 @@
+# tatu tutorial — schema v0
+# Mirrors the tauri-docs "Store" plugin page: install the plugin, register it,
+# use it from JavaScript and Rust, and grant the capability permissions.
+id: plugin-store
+title: Install and use the store plugin
+meta:
+  difficulty: beginner
+  time: 10min
+  platforms: [windows, macos, linux]
+
+base:
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
+  fixture: ../../bases/vanilla-ts@4.7.3
+
+harness:
+  prelude: |
+    #[tauri::command]
+    fn greet(name: &str) -> String {
+        format!("Hello, {}! You've been greeted from Rust!", name)
+    }
+  handlers: [greet]
+  plugins: ["tauri_plugin_store::Builder::default().build()"]
+
+steps:
+  - id: add-cargo-dep
+    task: >
+      Add the tauri-plugin-store crate to the Rust backend's dependencies in
+      `src-tauri/Cargo.toml`.
+    mutations:
+      - engine: shell
+        run: cargo add tauri-plugin-store
+        cwd: src-tauri
+
+  - id: register-plugin
+    task: >
+      Register the store plugin with the app builder in `lib.rs`. The
+      scaffold's `greet` command must keep working.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: add-js-bindings
+    task: >
+      Install the JavaScript guest bindings package with the project's package
+      manager, then make sure the frontend still builds.
+    mutations:
+      - engine: shell
+        run: pnpm add @tauri-apps/plugin-store
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: usage-js
+    task: >
+      From the frontend, load a store called `store.json`, set a key, read it
+      back and save the store. The TypeScript build must stay green.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: usage-rust
+    task: >
+      Use the store from Rust in the app's setup hook: load `store.json`, set
+      a key, read it back and release the resource.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: permissions
+    task: >
+      Let the frontend use the store: loading a store from the webview must be
+      denied before the capability grants the store permissions and succeed
+      after.
+    preconditions:
+      # the teaching beat: the ACL denies plugin commands until granted
+      - kind: ipc-acl
+        command: plugin:store|load
+        args: { path: "store.json" }
+        expect: denied
+    mutations:
+      - engine: json-merge
+        file: src-tauri/capabilities/default.json
+        merge:
+          permissions:
+            - "store:default"
+    assertions:
+      # load answers with a resource id, random by design — success is the assertion
+      - kind: ipc-acl
+        command: plugin:store|load
+        args: { path: "store.json" }
+        expect: succeeds

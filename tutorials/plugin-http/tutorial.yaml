@@ -1,0 +1,159 @@
+# tatu tutorial — schema v0
+# Mirrors the tauri-docs "HTTP Client" plugin page: install the plugin,
+# register it, configure the URL scope, and fetch from JavaScript and Rust.
+id: plugin-http
+title: Install and use the http plugin
+meta:
+  difficulty: beginner
+  time: 10min
+  platforms: [windows, macos, linux]
+
+base:
+  # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
+  fixture: ../../bases/vanilla-ts@4.7.3
+
+harness:
+  prelude: |
+    #[tauri::command]
+    fn greet(name: &str) -> String {
+        format!("Hello, {}! You've been greeted from Rust!", name)
+    }
+  handlers: [greet]
+  plugins: [tauri_plugin_http]
+
+steps:
+  - id: add-cargo-dep
+    task: >
+      Add the tauri-plugin-http crate to the Rust backend's dependencies in
+      `src-tauri/Cargo.toml`.
+    mutations:
+      - engine: shell
+        run: cargo add tauri-plugin-http
+        cwd: src-tauri
+
+  - id: register-plugin
+    task: >
+      Register the http plugin with the app builder in `lib.rs`. The
+      scaffold's `greet` command must keep working.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: ipc-local
+        command: greet
+        args: { name: "Tauri" }
+        expect: { ok: "Hello, Tauri! You've been greeted from Rust!" }
+
+  - id: add-js-bindings
+    task: >
+      Install the JavaScript guest bindings package with the project's package
+      manager, then make sure the frontend still builds.
+    mutations:
+      - engine: shell
+        run: pnpm add @tauri-apps/plugin-http
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: configure-scope
+    task: >
+      Allow the frontend to fetch from `*.tauri.app`, except the private
+      subdomain. Fetching must be fully denied before the capability grants
+      the scoped permission; after it, in-scope URLs work and out-of-scope or
+      denied URLs are rejected.
+    preconditions:
+      # the ACL denies the fetch command entirely until a permission grants it
+      - kind: ipc-acl
+        command: plugin:http|fetch
+        args:
+          clientConfig:
+            method: GET
+            url: "https://test.tauri.app/data.json"
+            headers: []
+        expect: denied
+    mutations:
+      - engine: json-merge
+        file: src-tauri/capabilities/default.json
+        merge:
+          permissions:
+            - identifier: "http:default"
+              allow:
+                - url: "https://*.tauri.app"
+              deny:
+                - url: "https://private.tauri.app"
+    assertions:
+      - kind: ipc-acl
+        command: plugin:http|fetch
+        args:
+          clientConfig:
+            method: GET
+            url: "https://test.tauri.app/data.json"
+            headers: []
+        # fetch answers with a resource id, random by design — success is the assertion
+        expect: succeeds
+      # the deny entry wins over the allow wildcard
+      - kind: ipc-acl
+        command: plugin:http|fetch
+        args:
+          clientConfig:
+            method: GET
+            url: "https://private.tauri.app/data.json"
+            headers: []
+        expect: denied
+      # a URL outside the allow list is rejected by the scope
+      - kind: ipc-acl
+        command: plugin:http|fetch
+        args:
+          clientConfig:
+            method: GET
+            url: "https://example.com/"
+            headers: []
+        expect: denied
+
+  - id: usage-js
+    task: >
+      Fetch a URL from the frontend with the plugin's `fetch` API. The
+      TypeScript build must stay green.
+    mutations:
+      - engine: overlay
+    assertions:
+      - kind: shell
+        run: pnpm build
+
+  - id: usage-rust
+    task: >
+      Fetch from Rust through the reqwest re-export: expose a command that
+      returns the HTTP status of a URL.
+    mutations:
+      - engine: overlay
+    harness:
+      prelude: |
+        #[tauri::command]
+        fn greet(name: &str) -> String {
+            format!("Hello, {}! You've been greeted from Rust!", name)
+        }
+
+        #[tauri::command]
+        async fn fetch_status(url: String) -> Result<u16, String> {
+            let res = tauri_plugin_http::reqwest::get(&url)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(res.status().as_u16())
+        }
+      handlers: [greet, fetch_status]
+      plugins: [tauri_plugin_http]
+    assertions:
+      - kind: ipc-local
+        command: fetch_status
+        args: { url: "http://127.0.0.1:41730/" }
+        setup: |
+          // one-shot local server so the assertion never leaves the machine
+          let listener = std::net::TcpListener::bind("127.0.0.1:41730").unwrap();
+          std::thread::spawn(move || {
+              use std::io::{Read, Write};
+              if let Ok((mut socket, _)) = listener.accept() {
+                  let mut buf = [0u8; 1024];
+                  let _ = socket.read(&mut buf);
+                  let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
+              }
+          });
+        expect: { ok: 200 }

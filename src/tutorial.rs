@@ -43,7 +43,9 @@ pub struct Harness {
   /// names passed to tauri::generate_handler![]
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub handlers: Option<Vec<String>>,
-  /// plugin crates registered on the mock builder (`<name>::init()`)
+  /// plugins registered on the mock builder: a bare crate name gets
+  /// `::init()`, an entry with a call (`crate::Builder::default().build()`)
+  /// is used verbatim
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub plugins: Option<Vec<String>>,
 }
@@ -136,6 +138,9 @@ pub enum Expect {
 #[serde(rename_all = "lowercase")]
 pub enum ExpectKeyword {
   Denied,
+  /// the command must succeed but its value is not compared — for commands
+  /// returning a resource id, which is random by design
+  Succeeds,
 }
 
 impl Tutorial {
