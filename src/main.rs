@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use tauri_tutorial_runner::error::{Error, Result};
 use tauri_tutorial_runner::runner::{run_tutorial, RunOptions};
 use tauri_tutorial_runner::tutorial::{load_tutorial, Tutorial};
-use tauri_tutorial_runner::{manifest, revendor, schema};
+use tauri_tutorial_runner::{manifest, revendor, schema, snapshot};
 
 #[derive(Parser)]
 #[command(
@@ -114,17 +114,14 @@ fn run() -> Result<()> {
     Commands::Schema { out, emit_ts } => {
       std::fs::create_dir_all(&out)?;
       let tutorial_schema = schemars::schema_for!(Tutorial);
-      let manifest_schema = schemars::schema_for!(manifest::Manifest);
       let tutorial_path = out.join("tutorial.schema.json");
-      let manifest_path = out.join("manifest.schema.json");
+      let manifest_path = out.join(snapshot::SCHEMA_FILE);
       std::fs::write(
         &tutorial_path,
         serde_json::to_string_pretty(&tutorial_schema)? + "\n",
       )?;
-      std::fs::write(
-        &manifest_path,
-        serde_json::to_string_pretty(&manifest_schema)? + "\n",
-      )?;
+      // the same rendering `tatu bless` writes next to a tutorial tree
+      std::fs::write(&manifest_path, manifest::schema_json()?)?;
       println!("wrote {}", tutorial_path.display());
       println!("wrote {}", manifest_path.display());
       if let Some(ts_path) = emit_ts {

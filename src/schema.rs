@@ -26,6 +26,7 @@ pub fn manifest_types_ts() -> Result<String> {
 fn ts_name(schema_name: &str) -> String {
   match schema_name {
     "StepRecord" => "TutorialStepRecord".to_string(),
+    "AssertionKind" => "TutorialAssertionKind".to_string(),
     other => other.to_string(),
   }
 }

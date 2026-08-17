@@ -7,4 +7,5 @@ pub mod mutations;
 pub mod revendor;
 pub mod runner;
 pub mod schema;
+pub mod snapshot;
 pub mod tutorial;

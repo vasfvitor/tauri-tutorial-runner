@@ -1,20 +1,35 @@
-use std::fs;
+use std::fmt::Write as _;
+use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::tutorial::Tutorial;
+use crate::snapshot::{self, Tree};
+use crate::tutorial::{AssertionKind, Tutorial};
 
 /// The committed contract between the runner and consumers (tauri-docs
 /// components read this JSON — field names and order are load-bearing for the
 /// diff-review workflow, so keep struct order stable).
 /// v2: advisory/platform optional (stripped in blessed manifests), status
 /// value `skipped` removed.
-pub const SCHEMA_VERSION: u32 = 2;
+/// v3: mutations record file snapshots (`base/`, `steps/<step>/`) instead of
+/// an embedded diff; consumers derive the diff from the pair.
+pub const SCHEMA_VERSION: u32 = 3;
+
+/// where the manifest points editors at its JSON Schema: one level above the
+/// manifest, shared by the sibling tutorials in both repos
+pub const SCHEMA_REF: &str = "../manifest.schema.json";
+
+fn schema_ref() -> String {
+  SCHEMA_REF.to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Manifest {
+  /// relative path to the JSON Schema, so an editor validates hand edits
+  #[serde(rename = "$schema", default = "schema_ref")]
+  pub schema: String,
   /// bumped when the manifest shape changes; consumers assert on it
   #[serde(rename = "schemaVersion")]
   pub schema_version: u32,
@@ -42,11 +57,13 @@ pub struct StepRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MutationRecord {
+  /// the mutated file; its content after this step is `steps/<step>/<file>`
   #[serde(skip_serializing_if = "Option::is_none")]
   pub file: Option<String>,
-  /// base-relative unified diff; empty string when the overlay changed nothing
+  /// true when the mutation created the file, so there is no `base/<file>`
+  /// and consumers render the whole file instead of a diff
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub diff: Option<String>,
+  pub created: Option<bool>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub command: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +72,7 @@ pub struct MutationRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResultRecord {
-  pub kind: String,
+  pub kind: AssertionKind,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub command: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,53 +88,106 @@ pub enum Status {
 }
 
 // advisory and platform describe where a run happened, not what the tutorial
-// does — the committed expected manifest carries only the portable fields
+// does — the committed expected manifest carries only the portable fields.
+// $schema is forced back to the ref so moving the schema shows up as a
+// fixed-point failure rather than as silent drift.
 fn strip_run_environment(mut manifest: Manifest) -> Manifest {
+  manifest.schema = schema_ref();
   manifest.advisory = None;
   manifest.platform = None;
   manifest
 }
 
-fn render(manifest: &Manifest) -> Result<String> {
+pub(crate) fn render(manifest: &Manifest) -> Result<String> {
   Ok(serde_json::to_string_pretty(manifest)? + "\n")
+}
+
+/// the manifest JSON Schema as written next to a tutorial tree and under
+/// `schemas/` — one rendering, so the two copies cannot drift
+pub fn schema_json() -> Result<String> {
+  Ok(serde_json::to_string_pretty(&schemars::schema_for!(Manifest))? + "\n")
 }
 
 pub fn normalized(json: &str) -> Result<String> {
   render(&strip_run_environment(serde_json::from_str(json)?))
 }
 
+/// The committed form of a tree: the manifest through the typed round-trip,
+/// snapshots as read (already LF-normalized).
+pub fn normalize_tree(tree: &Tree) -> Result<Tree> {
+  Ok(Tree {
+    manifest: normalized(&tree.manifest)?,
+    files: tree.files.clone(),
+  })
+}
+
+/// The three ways a tree drifts: the manifest, which snapshots exist, and the
+/// content of the shared ones. An empty report means identical.
+pub fn compare_trees(expected: &Tree, fresh: &Tree) -> String {
+  let mut report = String::new();
+  if expected.manifest != fresh.manifest {
+    report.push_str(&crate::helpers::unified_diff(
+      &expected.manifest,
+      &fresh.manifest,
+      "expected/manifest.json",
+      "fresh run",
+    ));
+  }
+  for path in fresh.files.keys() {
+    if !expected.files.contains_key(path) {
+      writeln!(report, "  added     {path}").expect("write to string");
+    }
+  }
+  for path in expected.files.keys() {
+    if !fresh.files.contains_key(path) {
+      writeln!(report, "  removed   {path}").expect("write to string");
+    }
+  }
+  for (path, before) in &expected.files {
+    let Some(after) = fresh.files.get(path) else {
+      continue;
+    };
+    if before != after {
+      report.push_str(&crate::helpers::unified_diff(
+        before,
+        after,
+        &format!("expected/{path}"),
+        &format!("fresh/{path}"),
+      ));
+    }
+  }
+  report
+}
+
 pub fn verify_expected(tutorial: &Tutorial) -> Result<()> {
-  let fresh = normalized(&read(
-    tutorial.out_manifest_path()?,
-    "run the tutorial first",
-  )?)?;
-  let expected = normalized(&read(
-    tutorial.expected_manifest_path(),
+  let fresh = normalized_tree(&tutorial.out_dir()?, "run the tutorial first")?;
+  let expected = normalized_tree(
+    &tutorial.expected_dir(),
     "`tatu bless` a reviewed run to create it",
-  )?)?;
-  if fresh == expected {
+  )?;
+  let report = compare_trees(&expected, &fresh);
+  if report.is_empty() {
     println!("manifest matches expected");
     return Ok(());
   }
-  print!(
-    "{}",
-    crate::helpers::unified_diff(&expected, &fresh, "expected.manifest.json", "fresh run")
-  );
+  print!("{report}");
   Err(Error::Runner(
     "manifest drifted from expected — review the diff, then `tatu bless` to accept it".into(),
   ))
 }
 
 pub fn bless_expected(tutorial: &Tutorial) -> Result<()> {
-  let raw = read(tutorial.out_manifest_path()?, "run the tutorial first")?;
-  let manifest: Manifest = serde_json::from_str(&raw)?;
+  let fresh = read(&tutorial.out_dir()?, "run the tutorial first")?;
+  let manifest: Manifest = serde_json::from_str(&fresh.manifest)?;
   let declared: Vec<&str> = tutorial.steps.iter().map(|s| s.id.as_str()).collect();
   check_blessable(&manifest, &declared)?;
+  snapshot::check_tree_consistent(&manifest, &fresh.files)?;
   if manifest.advisory == Some(true) {
     println!("note: blessing an advisory (host) run — authoritative manifests come from `tatu run` in the container");
   }
-  let expected = tutorial.expected_manifest_path();
-  fs::write(&expected, render(&strip_run_environment(manifest))?)?;
+  let expected = tutorial.expected_dir();
+  check_bless_target(&expected, &tutorial.dir)?;
+  snapshot::write_tree(&expected, &strip_run_environment(manifest), &fresh.files)?;
   println!("wrote {}", expected.display());
   Ok(())
 }
@@ -154,9 +224,37 @@ fn check_blessable(manifest: &Manifest, declared_steps: &[&str]) -> Result<()> {
   Ok(())
 }
 
-fn read(path: std::path::PathBuf, hint: &str) -> Result<String> {
-  fs::read_to_string(&path)
-    .map_err(|e| Error::Runner(format!("cannot read {}: {e} — {hint}", path.display())))
+// bless replaces the whole expected tree — the target must be the tutorial's
+// own expected/ dir, and whatever it replaces must itself be a tutorial tree
+fn check_bless_target(target: &Path, tutorial_dir: &Path) -> Result<()> {
+  if target.file_name() != Some(std::ffi::OsStr::new("expected"))
+    || target.parent() != Some(tutorial_dir)
+  {
+    return Err(Error::Runner(format!(
+      "refusing to bless into {} — the target must be <tutorial dir>/expected",
+      target.display()
+    )));
+  }
+  if target.exists() && !target.join(snapshot::MANIFEST_FILE).exists() {
+    return Err(Error::Runner(format!(
+      "refusing to replace {} — it holds no {}, so it may not be a tutorial tree",
+      target.display(),
+      snapshot::MANIFEST_FILE
+    )));
+  }
+  Ok(())
+}
+
+fn read(root: &Path, hint: &str) -> Result<Tree> {
+  snapshot::read_tree(root).map_err(|e| Error::Runner(format!("{e} — {hint}")))
+}
+
+// a tree only means anything while its manifest and its snapshots agree, so
+// the self-check runs before either side of a comparison is trusted
+fn normalized_tree(root: &Path, hint: &str) -> Result<Tree> {
+  let tree = normalize_tree(&read(root, hint)?)?;
+  snapshot::check_tree_consistent(&serde_json::from_str(&tree.manifest)?, &tree.files)?;
+  Ok(tree)
 }
 
 pub fn platform() -> &'static str {
@@ -177,7 +275,7 @@ mod tests {
     serde_json::from_str(json).unwrap()
   }
 
-  const GREEN: &str = r#"{"schemaVersion":2,"id":"t","title":"T","steps":[
+  const GREEN: &str = r#"{"schemaVersion":3,"id":"t","title":"T","steps":[
     {"id":"one","task":"","mutations":[],"preconditions":[],
      "assertions":[{"kind":"shell","status":"pass"}]},
     {"id":"two","task":"","mutations":[],"preconditions":[],
@@ -204,38 +302,53 @@ mod tests {
   #[test]
   fn normalized_strips_run_environment_fields() {
     let json =
-      r#"{"schemaVersion":1,"id":"t","title":"T","advisory":true,"platform":"win32","steps":[]}"#;
+      r#"{"schemaVersion":3,"id":"t","title":"T","advisory":true,"platform":"win32","steps":[]}"#;
     let n = normalized(json).unwrap();
     assert!(!n.contains("advisory"));
     assert!(!n.contains("platform"));
     assert!(n.contains("schemaVersion"));
   }
 
+  // a manifest pointing somewhere else must not survive a bless unnoticed
+  #[test]
+  fn normalized_forces_the_schema_ref() {
+    let json =
+      r#"{"$schema":"./elsewhere.json","schemaVersion":3,"id":"t","title":"T","steps":[]}"#;
+    assert!(normalized(json).unwrap().contains(super::SCHEMA_REF));
+  }
+
   #[test]
   fn normalized_is_idempotent() {
     let json =
-      r#"{"schemaVersion":1,"id":"t","title":"T","advisory":false,"platform":"linux","steps":[]}"#;
+      r#"{"schemaVersion":3,"id":"t","title":"T","advisory":false,"platform":"linux","steps":[]}"#;
     let once = normalized(json).unwrap();
     assert_eq!(normalized(&once).unwrap(), once);
   }
 
   // the typed round-trip must reproduce what `tatu bless` committed — a field
-  // reorder or serde attribute change here would make every manifest "drift"
+  // reorder or serde attribute change here would make every tree "drift"
   #[test]
-  fn committed_expected_manifests_are_normalized_fixed_points() {
+  fn committed_expected_trees_are_normalized_fixed_points() {
     let tutorials = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tutorials");
     let mut seen = 0;
+    let mut pending = 0;
     for entry in std::fs::read_dir(tutorials).unwrap() {
-      let path = entry.unwrap().path().join("expected.manifest.json");
-      if !path.exists() {
+      let dir = entry.unwrap().path();
+      if !dir.join("expected").is_dir() {
+        // v2 golden awaiting the re-bless onto v3
+        pending += usize::from(dir.join("expected.manifest.json").exists());
         continue;
       }
-      let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace("\r\n", "\n");
-      assert_eq!(normalized(&text).unwrap(), text, "{}", path.display());
+      let tree = super::snapshot::read_tree(&dir.join("expected")).unwrap();
+      assert_eq!(
+        normalized(&tree.manifest).unwrap(),
+        tree.manifest,
+        "{}",
+        dir.display()
+      );
+      super::snapshot::check_tree_consistent(&manifest(&tree.manifest), &tree.files).unwrap();
       seen += 1;
     }
-    assert!(seen >= 2, "expected manifests not found");
+    assert!(seen >= 2 || pending >= 2, "expected trees not found");
   }
 }

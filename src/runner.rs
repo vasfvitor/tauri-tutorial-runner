@@ -8,9 +8,8 @@ use crate::error::{Error, Result};
 use crate::harness::{apply_harness, generate_ipc_test_file, sanitize, IpcCase};
 use crate::helpers;
 use crate::manifest::{platform, Manifest, MutationRecord, ResultRecord, Status, StepRecord};
-use crate::mutations::{
-  apply_json_merge, apply_overlay, apply_shell, overlay_reverted_lines, shell_command,
-};
+use crate::mutations::{apply_json_merge, apply_overlay, apply_shell, shell_command, Applied};
+use crate::snapshot::{self, Snapshots};
 use crate::tutorial::{Assertion, AssertionKind, Harness, Mutation, Step, Tutorial};
 
 pub struct RunOptions {
@@ -35,6 +34,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
   println!("work tree: {}", work_dir.display());
 
   let mut manifest = Manifest {
+    schema: crate::manifest::SCHEMA_REF.to_string(),
     schema_version: crate::manifest::SCHEMA_VERSION,
     id: tutorial.id.clone(),
     title: tutorial.title.clone(),
@@ -44,7 +44,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
   };
 
   let mut failed = false;
-  let recorded_diffs = load_recorded_diffs(tutorial)?;
+  let mut snaps = Snapshots::default();
 
   for step in &tutorial.steps {
     if let Some(only) = &options.only_step {
@@ -71,30 +71,50 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
     )?;
 
     for mutation in &step.mutations {
-      let applied: Vec<MutationRecord> = match mutation {
-        Mutation::Overlay {} => {
-          let applied = apply_overlay(tutorial, &step.id, &work_dir)?;
-          check_overlay_reverts(&recorded_diffs, &step.id, &applied)?;
-          applied
-        }
+      let applied: Vec<Applied> = match mutation {
+        // TODO(next commit): the re-vendor guard, re-expressed over snapshots
+        Mutation::Overlay {} => apply_overlay(tutorial, &step.id, &work_dir)?,
         Mutation::JsonMerge { file, merge } => apply_json_merge(file, merge, &work_dir)?,
         Mutation::Shell { run, cwd } => apply_shell(run, cwd.as_deref(), &work_dir)?,
       };
-      record.mutations.extend(applied);
+      for item in applied {
+        record.mutations.push(match item {
+          Applied::File {
+            path,
+            before,
+            after,
+          } => {
+            let created = snaps.record_file(&step.id, &path, before.as_deref(), &after)?;
+            MutationRecord {
+              file: Some(path),
+              created: Some(created),
+              command: None,
+              cwd: None,
+            }
+          }
+          Applied::Shell { command, cwd } => MutationRecord {
+            file: None,
+            created: None,
+            command: Some(command),
+            cwd: Some(cwd),
+          },
+        });
+      }
     }
     if !record.mutations.is_empty() {
       println!("   applied {} mutation(s)", record.mutations.len());
     }
     // safety net behind HarnessGuard: runner scaffolding must never appear in
-    // the diffs readers see
-    if record.mutations.iter().any(|m| {
-      m.diff
-        .as_deref()
-        .is_some_and(|d| d.contains("tatu:harness"))
-    }) {
-      return Err(Error::Runner(
-        "internal: harness leaked into a recorded diff — this is a tatu bug".into(),
-      ));
+    // what readers see. A base carrying the marker means restore() did not run
+    // before the next step captured the file.
+    if let Some((path, _)) = snaps
+      .recorded_in(&step.id)
+      .iter()
+      .find(|(_, content)| content.contains("tatu:harness"))
+    {
+      return Err(Error::Runner(format!(
+        "internal: harness leaked into {path} — this is a tatu bug"
+      )));
     }
 
     record.assertions = run_assertion_phase(
@@ -121,15 +141,11 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
     println!("   step {}: {}", step.id, "ok".green());
   }
 
-  let manifest_path = tutorial.out_manifest_path()?;
-  fs::create_dir_all(manifest_path.parent().expect("manifest path has a dir"))?;
-  fs::write(
-    &manifest_path,
-    serde_json::to_string_pretty(&manifest)? + "\n",
-  )?;
+  let out_dir = tutorial.out_dir()?;
+  snapshot::write_tree(&out_dir, &manifest, &snaps.tree_files())?;
   println!(
     "\nmanifest: {}{}",
-    manifest_path.display(),
+    out_dir.join(snapshot::MANIFEST_FILE).display(),
     if manifest.advisory == Some(true) {
       " (advisory)"
     } else {
@@ -139,55 +155,6 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
   if failed {
     return Err(Error::Runner("tutorial failed — see output above".into()));
-  }
-  Ok(())
-}
-
-// (step id, file) → recorded diff from the committed expected manifest; empty
-// map when the tutorial has none yet (first authoring run)
-type RecordedDiffs = std::collections::HashMap<(String, String), String>;
-
-fn load_recorded_diffs(tutorial: &Tutorial) -> Result<RecordedDiffs> {
-  let path = tutorial.expected_manifest_path();
-  let mut map = RecordedDiffs::new();
-  if !path.exists() {
-    return Ok(map);
-  }
-  let expected: Manifest = serde_json::from_str(&fs::read_to_string(&path)?)
-    .map_err(|e| Error::Runner(format!("unreadable {}: {e}", path.display())))?;
-  for step in expected.steps {
-    for mutation in step.mutations {
-      if let (Some(file), Some(diff)) = (mutation.file, mutation.diff) {
-        map.insert((step.id.clone(), file), diff);
-      }
-    }
-  }
-  Ok(map)
-}
-
-// the re-vendor guard: hard-fail before assertions ever run if an overlay
-// would silently revert base content the recorded tutorial diff never removed
-// (a recurring docs failure: a guide written against an older scaffold
-// quietly undoes what the newer scaffold added)
-fn check_overlay_reverts(
-  recorded: &RecordedDiffs,
-  step_id: &str,
-  applied: &[MutationRecord],
-) -> Result<()> {
-  for record in applied {
-    let (Some(file), Some(fresh)) = (&record.file, &record.diff) else {
-      continue;
-    };
-    let Some(recorded_diff) = recorded.get(&(step_id.to_string(), file.clone())) else {
-      continue; // new overlay file — no recorded diff to protect yet
-    };
-    let reverted = overlay_reverted_lines(recorded_diff, fresh);
-    if !reverted.is_empty() {
-      return Err(Error::Runner(format!(
-        "re-vendor guard: overlay steps/{step_id}/{file} would revert base lines the recorded tutorial diff never removed:\n  -{}\nthe base changed under this overlay — re-sync the overlay with the new base, then regenerate expected.manifest.json",
-        reverted.join("\n  -")
-      )));
-    }
   }
   Ok(())
 }
@@ -232,7 +199,7 @@ fn run_assertion_phase(
     guard.restore(outcome.ok.then_some(test_path.as_path()))?;
     for assertion in &ipc {
       results.push(ResultRecord {
-        kind: assertion.kind.as_str().to_string(),
+        kind: assertion.kind,
         command: assertion.command.clone(),
         run: None,
         status: if outcome.ok {
@@ -259,7 +226,7 @@ fn run_assertion_phase(
     let output = shell_command(run).current_dir(work_dir).output()?;
     let ok = output.status.success();
     results.push(ResultRecord {
-      kind: "shell".to_string(),
+      kind: AssertionKind::Shell,
       command: None,
       run: Some(run.to_string()),
       status: if ok { Status::Pass } else { Status::Fail },

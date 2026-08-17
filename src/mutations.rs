@@ -4,16 +4,27 @@ use std::process::Command;
 
 use crate::error::{Error, Result};
 use crate::helpers;
-use crate::manifest::MutationRecord;
 use crate::tutorial::Tutorial;
 
-// Overlays are the authoring surface; the derived base-relative diff is the
-// canonical record.
-pub fn apply_overlay(
-  tutorial: &Tutorial,
-  step_id: &str,
-  work_dir: &Path,
-) -> Result<Vec<MutationRecord>> {
+/// What an applier did. File mutations hand back the content they saw on
+/// disk — the runner records that pair as snapshots, and consumers derive the
+/// diff from it. Shell mutations stay file-blind, as in v2.
+#[derive(Debug)]
+pub enum Applied {
+  File {
+    path: String,
+    before: Option<String>,
+    after: String,
+  },
+  Shell {
+    command: String,
+    cwd: String,
+  },
+}
+
+// Overlays are the authoring surface; the file content on either side of the
+// copy is the canonical record.
+pub fn apply_overlay(tutorial: &Tutorial, step_id: &str, work_dir: &Path) -> Result<Vec<Applied>> {
   let overlay_dir = tutorial.dir.join("steps").join(step_id);
   let mut applied = Vec::new();
   for entry in walkdir::WalkDir::new(&overlay_dir).sort_by_file_name() {
@@ -32,11 +43,10 @@ pub fn apply_overlay(
     }
     fs::copy(entry.path(), &dest)?;
     let after = fs::read_to_string(&dest)?;
-    applied.push(MutationRecord {
-      file: Some(rel.clone()),
-      diff: Some(unified_diff(before.as_deref(), &after, &rel)),
-      command: None,
-      cwd: None,
+    applied.push(Applied::File {
+      path: rel,
+      before,
+      after,
     });
   }
   Ok(applied)
@@ -46,21 +56,20 @@ pub fn apply_json_merge(
   file: &str,
   merge: &serde_json::Value,
   work_dir: &Path,
-) -> Result<Vec<MutationRecord>> {
+) -> Result<Vec<Applied>> {
   let target = work_dir.join(file);
   let before = fs::read_to_string(&target)?;
   let merged = deep_merge(serde_json::from_str(&before)?, merge);
   let after = crate::json_style::render_merged(&before, &merged)?;
   fs::write(&target, &after)?;
-  Ok(vec![MutationRecord {
-    file: Some(file.to_string()),
-    diff: Some(unified_diff(Some(&before), &after, file)),
-    command: None,
-    cwd: None,
+  Ok(vec![Applied::File {
+    path: file.to_string(),
+    before: Some(before),
+    after,
   }])
 }
 
-pub fn apply_shell(run: &str, cwd: Option<&str>, work_dir: &Path) -> Result<Vec<MutationRecord>> {
+pub fn apply_shell(run: &str, cwd: Option<&str>, work_dir: &Path) -> Result<Vec<Applied>> {
   let dir = match cwd {
     Some(sub) => work_dir.join(sub),
     None => work_dir.to_path_buf(),
@@ -73,11 +82,9 @@ pub fn apply_shell(run: &str, cwd: Option<&str>, work_dir: &Path) -> Result<Vec<
       String::from_utf8_lossy(&output.stderr)
     )));
   }
-  Ok(vec![MutationRecord {
-    file: None,
-    diff: None,
-    command: Some(run.to_string()),
-    cwd: Some(cwd.unwrap_or(".").to_string()),
+  Ok(vec![Applied::Shell {
+    command: run.to_string(),
+    cwd: cwd.unwrap_or(".").to_string(),
   }])
 }
 
@@ -156,22 +163,9 @@ pub fn overlay_reverted_lines(recorded: &str, fresh: &str) -> Vec<String> {
   offending
 }
 
-fn unified_diff(before: Option<&str>, after: &str, label: &str) -> String {
-  match before {
-    None => format!(
-      "new file: {label}\n+{}",
-      after.split('\n').collect::<Vec<_>>().join("\n+")
-    ),
-    Some(before) if before == after => String::new(),
-    Some(before) => {
-      helpers::unified_diff(before, after, &format!("a/{label}"), &format!("b/{label}"))
-    }
-  }
-}
-
 #[cfg(test)]
 mod tests {
-  use super::{deep_merge, overlay_reverted_lines, unified_diff};
+  use super::{deep_merge, overlay_reverted_lines};
 
   const RECORDED: &str = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+new_line\n+added_line\n context2\n";
 
@@ -201,9 +195,9 @@ mod tests {
     assert!(overlay_reverted_lines("", "--- a/x\n+++ b/x\n").is_empty());
   }
 
-  // the exact greet-tutorial merge against the real pool base — its diff is
-  // committed in expected.manifest.json, so a rendering change here means
-  // that manifest must be re-blessed
+  // the exact greet-tutorial merge against the real pool base — the pinned
+  // guarantee is json_style's minimal render, so the diff is computed here
+  // rather than recorded anywhere
   #[test]
   fn greet_capability_merge_diff_is_minimal() {
     let before = std::fs::read_to_string(
@@ -217,7 +211,12 @@ mod tests {
     });
     let merged = deep_merge(serde_json::from_str(&before).unwrap(), &merge);
     let after = crate::json_style::render_merged(&before, &merged).unwrap();
-    let diff = unified_diff(Some(&before), &after, "src-tauri/capabilities/default.json");
+    let diff = crate::helpers::unified_diff(
+      &before,
+      &after,
+      "a/src-tauri/capabilities/default.json",
+      "b/src-tauri/capabilities/default.json",
+    );
     assert_eq!(
       diff,
       "--- a/src-tauri/capabilities/default.json\n\

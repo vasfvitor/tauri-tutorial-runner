@@ -177,21 +177,14 @@ impl Tutorial {
       .ok_or_else(|| Error::Runner("tutorial dir has no repo root two levels up".into()))
   }
 
-  /// where a run writes its manifest
-  pub fn out_manifest_path(&self) -> Result<PathBuf> {
-    Ok(
-      self
-        .repo_root()?
-        .join(".tatu")
-        .join("out")
-        .join(&self.id)
-        .join("tutorial.manifest.json"),
-    )
+  /// where a run writes its manifest tree
+  pub fn out_dir(&self) -> Result<PathBuf> {
+    Ok(self.repo_root()?.join(".tatu").join("out").join(&self.id))
   }
 
-  /// the committed manifest CI compares runs against
-  pub fn expected_manifest_path(&self) -> PathBuf {
-    self.dir.join("expected.manifest.json")
+  /// the committed tree CI compares runs against
+  pub fn expected_dir(&self) -> PathBuf {
+    self.dir.join("expected")
   }
 }
 
