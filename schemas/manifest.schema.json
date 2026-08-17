@@ -3,6 +3,11 @@
   "title": "Manifest",
   "type": "object",
   "properties": {
+    "$schema": {
+      "description": "relative path to the JSON Schema, so an editor validates hand edits",
+      "type": "string",
+      "default": "../manifest.schema.json"
+    },
     "schemaVersion": {
       "description": "bumped when the manifest shape changes; consumers assert on it",
       "type": "integer",
@@ -83,15 +88,16 @@
       "type": "object",
       "properties": {
         "file": {
+          "description": "the mutated file; its content after this step is `steps/<step>/<file>`",
           "type": [
             "string",
             "null"
           ]
         },
-        "diff": {
-          "description": "base-relative unified diff; empty string when the overlay changed nothing",
+        "created": {
+          "description": "true when the mutation created the file, so there is no `base/<file>`\nand consumers render the whole file instead of a diff",
           "type": [
-            "string",
+            "boolean",
             "null"
           ]
         },
@@ -113,7 +119,7 @@
       "type": "object",
       "properties": {
         "kind": {
-          "type": "string"
+          "$ref": "#/$defs/AssertionKind"
         },
         "command": {
           "type": [
@@ -134,6 +140,14 @@
       "required": [
         "kind",
         "status"
+      ]
+    },
+    "AssertionKind": {
+      "type": "string",
+      "enum": [
+        "ipc-local",
+        "ipc-acl",
+        "shell"
       ]
     },
     "Status": {

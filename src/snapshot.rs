@@ -173,22 +173,23 @@ pub fn read_tree(root: &Path) -> Result<Tree> {
   Ok(Tree { manifest, files })
 }
 
-/// Write a tutorial tree: the manifest, its snapshots, and the JSON Schema the
-/// manifest's `$schema` points at (one level up, shared by sibling tutorials).
-/// The root is replaced wholesale — a snapshot from an older run must never
-/// survive into the tree that replaces it.
+/// Write a tutorial tree: the manifest and its snapshots. The root is
+/// replaced wholesale — a snapshot from an older run must never survive into
+/// the tree that replaces it.
 pub fn write_tree(
   root: &Path,
   manifest: &Manifest,
   files: &BTreeMap<String, String>,
 ) -> Result<()> {
   check_tree_consistent(manifest, files)?;
-  let parent = root.parent().ok_or_else(|| {
-    Error::Runner(format!(
+  // the wholesale replace below is destructive; a root with no parent is not
+  // a tutorial tree
+  if root.parent().is_none() {
+    return Err(Error::Runner(format!(
       "refusing to write a tutorial tree at {} — it has no parent directory",
       root.display()
-    ))
-  })?;
+    )));
+  }
   if root.exists() {
     fs::remove_dir_all(root)?;
   }
@@ -201,7 +202,16 @@ pub fn write_tree(
     }
     fs::write(dest, content)?;
   }
-  fs::write(parent.join(SCHEMA_FILE), crate::manifest::schema_json()?)?;
+  Ok(())
+}
+
+/// Put a copy of the schema where a fresh run's `$schema` resolves, so the
+/// tree under `.tatu/out/` validates while it is being reviewed. Committed
+/// trees deliberately carry no copy: `tatu verify` and the fixed-point test
+/// guard those, not an editor.
+pub fn write_run_schema(out_root: &Path) -> Result<()> {
+  fs::create_dir_all(out_root)?;
+  fs::write(out_root.join(SCHEMA_FILE), crate::manifest::schema_json()?)?;
   Ok(())
 }
 

@@ -150,6 +150,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
   let out_dir = tutorial.out_dir()?;
   snapshot::write_tree(&out_dir, &manifest, &snaps.tree_files())?;
+  snapshot::write_run_schema(out_dir.parent().expect("out dir has a parent"))?;
   println!(
     "\nmanifest: {}{}",
     out_dir.join(snapshot::MANIFEST_FILE).display(),

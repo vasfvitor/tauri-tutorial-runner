@@ -7,7 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tauri_tutorial_runner::manifest::{compare_trees, normalize_tree, Manifest, SCHEMA_REF};
-use tauri_tutorial_runner::snapshot::{read_tree, write_tree, Snapshots, Tree, SCHEMA_FILE};
+use tauri_tutorial_runner::snapshot::{
+  read_tree, write_run_schema, write_tree, Snapshots, Tree, SCHEMA_FILE,
+};
 
 const MANIFEST: &str = r#"{"schemaVersion":3,"id":"t","title":"T","advisory":true,
   "platform":"win32","steps":[{"id":"one","task":"","preconditions":[],"assertions":[],
@@ -68,7 +70,9 @@ fn a_written_tree_reads_back_unchanged() {
 
   let read = read_tree(&temp.root()).expect("read");
   assert_eq!(read.files, snaps.tree_files());
-  // the schema the manifest's $schema points at lands one level up
+  // a committed tree carries no schema copy — only a run's out dir gets one
+  assert!(!temp.path().join(SCHEMA_FILE).exists());
+  write_run_schema(temp.path()).expect("run schema");
   assert!(temp.path().join(SCHEMA_FILE).exists());
 
   let normalized = normalize_tree(&read).expect("normalize");
