@@ -4,9 +4,9 @@ name: tutorials
 # step means the tutorial (or Tauri underneath it) broke. Scheduled so drift
 # is caught without anyone pushing.
 #
-# TODO(blocked until tauri-docs commits these manifests): compare each fresh
-# manifest against the copy committed in tauri-docs and open a PR when they
-# diverge.
+# TODO(blocked until tauri-docs commits these trees): tree-compare each fresh
+# .tatu/out/<id>/ against src/data/tutorials/<id>/ in tauri-docs and open a PR
+# when they diverge.
 
 on:
   workflow_dispatch:
@@ -102,4 +102,4 @@ jobs:
         if: always()
         with:
           name: tutorial-manifests-${{ matrix.tutorial }}
-          path: .tatu/out/**/tutorial.manifest.json
+          path: .tatu/out/${{ matrix.tutorial }}/**
