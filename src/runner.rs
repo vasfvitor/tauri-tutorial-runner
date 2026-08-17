@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -8,7 +9,9 @@ use crate::error::{Error, Result};
 use crate::harness::{apply_harness, generate_ipc_test_file, sanitize, IpcCase};
 use crate::helpers;
 use crate::manifest::{platform, Manifest, MutationRecord, ResultRecord, Status, StepRecord};
-use crate::mutations::{apply_json_merge, apply_overlay, apply_shell, shell_command, Applied};
+use crate::mutations::{
+  apply_json_merge, apply_overlay, apply_shell, overlay_reverted_lines, shell_command, Applied,
+};
 use crate::snapshot::{self, Snapshots};
 use crate::tutorial::{Assertion, AssertionKind, Harness, Mutation, Step, Tutorial};
 
@@ -45,6 +48,7 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
   let mut failed = false;
   let mut snaps = Snapshots::default();
+  let expected = ExpectedTree::load(tutorial)?;
 
   for step in &tutorial.steps {
     if let Some(only) = &options.only_step {
@@ -72,8 +76,11 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
     for mutation in &step.mutations {
       let applied: Vec<Applied> = match mutation {
-        // TODO(next commit): the re-vendor guard, re-expressed over snapshots
-        Mutation::Overlay {} => apply_overlay(tutorial, &step.id, &work_dir)?,
+        Mutation::Overlay {} => {
+          let applied = apply_overlay(tutorial, &step.id, &work_dir)?;
+          check_overlay_reverts(&expected, &step.id, &applied)?;
+          applied
+        }
         Mutation::JsonMerge { file, merge } => apply_json_merge(file, merge, &work_dir)?,
         Mutation::Shell { run, cwd } => apply_shell(run, cwd.as_deref(), &work_dir)?,
       };
@@ -155,6 +162,111 @@ pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
 
   if failed {
     return Err(Error::Runner("tutorial failed — see output above".into()));
+  }
+  Ok(())
+}
+
+/// The committed tree, indexed for the re-vendor guard: what the tutorial
+/// recorded a file looking like on either side of each step. An absent
+/// `expected/` dir yields an empty tree and the guard becomes a no-op — a
+/// first authoring run has nothing to protect yet.
+#[derive(Default)]
+struct ExpectedTree {
+  manifest: Option<Manifest>,
+  base: BTreeMap<String, String>,
+  steps: BTreeMap<(String, String), String>,
+}
+
+impl ExpectedTree {
+  fn load(tutorial: &Tutorial) -> Result<Self> {
+    let dir = tutorial.expected_dir();
+    if !dir.is_dir() {
+      return Ok(Self::default());
+    }
+    let tree = snapshot::read_tree(&dir)?;
+    let manifest: Manifest = serde_json::from_str(&tree.manifest).map_err(|e| {
+      Error::Runner(format!(
+        "unreadable {}: {e}",
+        dir.join(snapshot::MANIFEST_FILE).display()
+      ))
+    })?;
+    let mut base = BTreeMap::new();
+    let mut steps = BTreeMap::new();
+    for (path, content) in tree.files {
+      if let Some(file) = path.strip_prefix("base/") {
+        base.insert(file.to_string(), content);
+      } else if let Some((step, file)) = path
+        .strip_prefix("steps/")
+        .and_then(|rest| rest.split_once('/'))
+      {
+        steps.insert((step.to_string(), file.to_string()), content);
+      }
+    }
+    Ok(Self {
+      manifest: Some(manifest),
+      base,
+      steps,
+    })
+  }
+
+  /// the file's content after `step`, if the tutorial recorded a mutation there
+  fn after(&self, step: &str, file: &str) -> Option<&str> {
+    self
+      .steps
+      .get(&(step.to_string(), file.to_string()))
+      .map(String::as_str)
+  }
+
+  /// what a consumer derives as the file's before at `step`: the most recent
+  /// snapshot from an earlier step, else the base
+  fn before(&self, step: &str, file: &str) -> Option<&str> {
+    let manifest = self.manifest.as_ref()?;
+    let mut latest = self.base.get(file).map(String::as_str);
+    for recorded in &manifest.steps {
+      if recorded.id == step {
+        return latest;
+      }
+      if let Some(content) = self.after(&recorded.id, file) {
+        latest = Some(content);
+      }
+    }
+    None
+  }
+}
+
+// the re-vendor guard: hard-fail before assertions ever run if an overlay
+// would silently revert base content the recorded tutorial never removed
+// (a recurring docs failure: a guide written against an older scaffold
+// quietly undoes what the newer scaffold added)
+fn check_overlay_reverts(
+  expected: &ExpectedTree,
+  step_id: &str,
+  applied: &[Applied],
+) -> Result<()> {
+  for item in applied {
+    let Applied::File {
+      path,
+      before: Some(fresh_before),
+      after,
+    } = item
+    else {
+      continue;
+    };
+    // no recorded pair for this (step, file) — a new overlay file, nothing to
+    // protect yet
+    let (Some(recorded_before), Some(recorded_after)) = (
+      expected.before(step_id, path),
+      expected.after(step_id, path),
+    ) else {
+      continue;
+    };
+    let reverted = overlay_reverted_lines(recorded_before, recorded_after, fresh_before, after);
+    if !reverted.is_empty() {
+      return Err(Error::Runner(format!(
+        "re-vendor guard: overlay steps/{step_id}/{path} would revert base lines expected/steps/{step_id}/{path} never removed:\n  -{}\nthe base changed under this overlay — re-sync the overlay with the new base, then re-bless the tutorial",
+        reverted.join("\n  -")
+      )));
+    }
   }
   Ok(())
 }

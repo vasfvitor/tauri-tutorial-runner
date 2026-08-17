@@ -135,26 +135,35 @@ fn deep_merge(base: serde_json::Value, patch: &serde_json::Value) -> serde_json:
   }
 }
 
-// Re-vendor guard: an overlay wholesale-replaces its base
-// file, so base lines the recorded tutorial diff never removed must survive.
-// Returns the base lines the fresh diff removes beyond the recorded one —
-// non-empty means the base changed under the overlay and applying it would
-// silently revert scaffold content the tutorial never discusses.
-pub fn overlay_reverted_lines(recorded: &str, fresh: &str) -> Vec<String> {
-  fn removed_counts(diff: &str) -> std::collections::HashMap<&str, u32> {
-    let mut counts = std::collections::HashMap::new();
-    for line in diff.lines() {
-      if line.starts_with("---") {
-        continue;
-      }
-      if let Some(rest) = line.strip_prefix('-') {
-        *counts.entry(rest).or_default() += 1;
+// Re-vendor guard: an overlay wholesale-replaces its base file, so base lines
+// the recorded tutorial never removed must survive. Returns the lines the
+// fresh overlay drops beyond what the recorded one did — non-empty means the
+// base changed under the overlay and applying it would silently revert
+// scaffold content the tutorial never discusses.
+pub fn overlay_reverted_lines(
+  recorded_before: &str,
+  recorded_after: &str,
+  fresh_before: &str,
+  fresh_after: &str,
+) -> Vec<String> {
+  // how often each line is lost across the pair; a line that only moved is
+  // still there, so it does not count. `lines()` drops a trailing \r, which
+  // keeps a CRLF work tree comparable to the LF snapshots.
+  fn removed_counts<'a>(before: &'a str, after: &str) -> std::collections::HashMap<&'a str, i32> {
+    let mut counts: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
+    for line in before.lines() {
+      *counts.entry(line).or_default() += 1;
+    }
+    for line in after.lines() {
+      if let Some(count) = counts.get_mut(line) {
+        *count -= 1;
       }
     }
+    counts.retain(|_, n| *n > 0);
     counts
   }
-  let recorded = removed_counts(recorded);
-  let mut offending: Vec<String> = removed_counts(fresh)
+  let recorded = removed_counts(recorded_before, recorded_after);
+  let mut offending: Vec<String> = removed_counts(fresh_before, fresh_after)
     .into_iter()
     .filter(|(line, n)| *n > recorded.get(line).copied().unwrap_or(0))
     .map(|(line, _)| line.to_string())
@@ -167,18 +176,20 @@ pub fn overlay_reverted_lines(recorded: &str, fresh: &str) -> Vec<String> {
 mod tests {
   use super::{deep_merge, overlay_reverted_lines};
 
-  const RECORDED: &str = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+new_line\n+added_line\n context2\n";
+  const BEFORE: &str = "context\nold_line\ncontext2\n";
+  const AFTER: &str = "context\nnew_line\nadded_line\ncontext2\n";
 
   #[test]
-  fn identical_diff_passes() {
-    assert!(overlay_reverted_lines(RECORDED, RECORDED).is_empty());
+  fn identical_snapshots_pass() {
+    assert!(overlay_reverted_lines(BEFORE, AFTER, BEFORE, AFTER).is_empty());
   }
 
   #[test]
   fn extra_removal_is_flagged() {
-    let fresh = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n context\n-old_line\n-upstream_new_line\n+new_line\n context2\n";
+    // the base gained a line the overlay was never re-synced with
+    let fresh_before = "context\nold_line\nupstream_new_line\ncontext2\n";
     assert_eq!(
-      overlay_reverted_lines(RECORDED, fresh),
+      overlay_reverted_lines(BEFORE, AFTER, fresh_before, AFTER),
       vec!["upstream_new_line".to_string()]
     );
   }
@@ -186,13 +197,17 @@ mod tests {
   #[test]
   fn changed_additions_alone_pass() {
     // tutorial author edited what the overlay adds — not a revert
-    let fresh = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n context\n-old_line\n+different_new_line\n context2\n";
-    assert!(overlay_reverted_lines(RECORDED, fresh).is_empty());
+    let fresh_after = "context\ndifferent_new_line\ncontext2\n";
+    assert!(overlay_reverted_lines(BEFORE, AFTER, BEFORE, fresh_after).is_empty());
   }
 
+  // comparing multisets instead of diff text: a base that reorders a line it
+  // still carries is not reverting anything
   #[test]
-  fn header_minus_lines_ignored() {
-    assert!(overlay_reverted_lines("", "--- a/x\n+++ b/x\n").is_empty());
+  fn moved_line_is_not_a_revert() {
+    let fresh_before = "context2\ncontext\nold_line\n";
+    let fresh_after = "context2\ncontext\nnew_line\nadded_line\n";
+    assert!(overlay_reverted_lines(BEFORE, AFTER, fresh_before, fresh_after).is_empty());
   }
 
   // the exact greet-tutorial merge against the real pool base — the pinned
