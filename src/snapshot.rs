@@ -107,10 +107,10 @@ impl Snapshots {
   pub fn tree_files(&self) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     for (file, capture) in &self.base {
-      files.insert(format!("base/{file}"), capture.content.clone());
+      files.insert(tree_path(None, file), capture.content.clone());
     }
     for ((step, file), content) in &self.steps {
-      files.insert(format!("steps/{step}/{file}"), content.clone());
+      files.insert(tree_path(Some(step), file), content.clone());
     }
     files
   }
@@ -121,16 +121,35 @@ impl Snapshots {
     let mut out = Vec::new();
     for (file, capture) in &self.base {
       if capture.step == step_id {
-        out.push((format!("base/{file}"), capture.content.as_str()));
+        out.push((tree_path(None, file), capture.content.as_str()));
       }
     }
     for ((step, file), content) in &self.steps {
       if step == step_id {
-        out.push((format!("steps/{step}/{file}"), content.as_str()));
+        out.push((tree_path(Some(step), file), content.as_str()));
       }
     }
     out
   }
+}
+
+/// Where a snapshot lives in the tree: a file's content before the tutorial
+/// touched it under `base/`, its content after a step under `steps/<step>/`.
+pub fn tree_path(step: Option<&str>, file: &str) -> String {
+  match step {
+    Some(step) => format!("steps/{step}/{file}"),
+    None => format!("base/{file}"),
+  }
+}
+
+/// the inverse of [`tree_path`]: the (step, file) a tree entry records, or
+/// `None` for a path that is not a snapshot
+pub fn parse_tree_path(rel: &str) -> Option<(Option<&str>, &str)> {
+  if let Some(file) = rel.strip_prefix("base/") {
+    return (!file.is_empty()).then_some((None, file));
+  }
+  let (step, file) = rel.strip_prefix("steps/")?.split_once('/')?;
+  (!step.is_empty() && !file.is_empty()).then_some((Some(step), file))
 }
 
 /// A tutorial tree read back from disk: the manifest verbatim plus every
@@ -159,7 +178,7 @@ pub fn read_tree(root: &Path) -> Result<Tree> {
     let text = normalize_lf(&fs::read_to_string(entry.path())?);
     if rel == MANIFEST_FILE {
       manifest = Some(text);
-    } else if rel.starts_with("base/") || rel.starts_with("steps/") {
+    } else if parse_tree_path(&rel).is_some() {
       files.insert(rel, text);
     } else {
       return Err(Error::Runner(format!(
@@ -223,6 +242,7 @@ pub fn write_run_schema(out_root: &Path) -> Result<()> {
 pub fn check_tree_consistent(manifest: &Manifest, files: &BTreeMap<String, String>) -> Result<()> {
   let mut expected: BTreeSet<String> = BTreeSet::new();
   let mut seen: BTreeSet<&str> = BTreeSet::new();
+  let mut recorded: BTreeSet<(&str, &str)> = BTreeSet::new();
   for step in &manifest.steps {
     let step_id = &step.id;
     for mutation in &step.mutations {
@@ -234,15 +254,22 @@ pub fn check_tree_consistent(manifest: &Manifest, files: &BTreeMap<String, Strin
               "step \"{step_id}\" records {file} with a command — a file mutation carries no command"
             )));
           }
+          // one snapshot per (step, file): a second record has nowhere to go
+          // in the tree, so the duplicate would collapse unnoticed
+          if !recorded.insert((step_id.as_str(), file.as_str())) {
+            return Err(inconsistent(format!(
+              "step \"{step_id}\" records {file} twice — a step keeps one snapshot per file"
+            )));
+          }
           let first = seen.insert(file.as_str());
           if created && !first {
             return Err(inconsistent(format!(
               "step \"{step_id}\" marks {file} created, but an earlier step already recorded it"
             )));
           }
-          expected.insert(format!("steps/{step_id}/{file}"));
+          expected.insert(tree_path(Some(step_id), file));
           if first && !created {
-            expected.insert(format!("base/{file}"));
+            expected.insert(tree_path(None, file));
           }
         }
         (Some(file), None) => {
@@ -314,7 +341,7 @@ fn normalize_lf(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::{check_tree_consistent, Snapshots};
+  use super::{check_tree_consistent, parse_tree_path, tree_path, Snapshots};
   use crate::manifest::Manifest;
   use std::collections::BTreeMap;
 
@@ -499,6 +526,39 @@ mod tests {
     .unwrap_err()
     .to_string();
     assert!(err.contains("steps/one/stray.ts is orphaned"), "{err}");
+  }
+
+  #[test]
+  fn the_same_file_recorded_twice_in_a_step_is_caught() {
+    let m = manifest(&step(
+      "one",
+      r#"{"file":"src/lib.rs","created":false},{"file":"src/lib.rs","created":false}"#,
+    ));
+    let err = check_tree_consistent(
+      &m,
+      &files(&[("base/src/lib.rs", ""), ("steps/one/src/lib.rs", "")]),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("records src/lib.rs twice"), "{err}");
+  }
+
+  #[test]
+  fn tree_paths_round_trip() {
+    for step in [None, Some("one")] {
+      let path = tree_path(step, "src/lib.rs");
+      assert_eq!(parse_tree_path(&path), Some((step, "src/lib.rs")));
+    }
+    for rel in [
+      "manifest.json",
+      "notes.md",
+      "base/",
+      "steps/one",
+      "steps/one/",
+      "steps//lib.rs",
+    ] {
+      assert!(parse_tree_path(rel).is_none(), "accepted {rel}");
+    }
   }
 
   #[test]

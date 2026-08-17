@@ -21,6 +21,22 @@ pub struct RunOptions {
 }
 
 pub fn run_tutorial(tutorial: &Tutorial, options: &RunOptions) -> Result<()> {
+  // an unknown --step would filter every step out and still replace the out
+  // tree with a manifest covering nothing
+  if let Some(only) = &options.only_step {
+    if !tutorial.steps.iter().any(|step| &step.id == only) {
+      return Err(Error::Runner(format!(
+        "unknown step \"{only}\" — tutorial.yaml declares [{}]",
+        tutorial
+          .steps
+          .iter()
+          .map(|step| step.id.as_str())
+          .collect::<Vec<_>>()
+          .join(", ")
+      )));
+    }
+  }
+
   let repo_root = tutorial.repo_root()?;
   let work_dir = repo_root.join(".tatu").join("work").join(&tutorial.id);
   // shared across runs so a re-check pays incremental compile cost, not a cold build
@@ -194,13 +210,22 @@ impl ExpectedTree {
     let mut base = BTreeMap::new();
     let mut steps = BTreeMap::new();
     for (path, content) in tree.files {
-      if let Some(file) = path.strip_prefix("base/") {
-        base.insert(file.to_string(), content);
-      } else if let Some((step, file)) = path
-        .strip_prefix("steps/")
-        .and_then(|rest| rest.split_once('/'))
-      {
-        steps.insert((step.to_string(), file.to_string()), content);
+      // dropping an unreadable entry would disable the guard for that file
+      // alone, which is the one failure mode the guard exists to catch
+      match snapshot::parse_tree_path(&path) {
+        Some((None, file)) => {
+          base.insert(file.to_string(), content);
+        }
+        Some((Some(step), file)) => {
+          steps.insert((step.to_string(), file.to_string()), content);
+        }
+        None => {
+          return Err(Error::Runner(format!(
+            "unexpected entry {path} in {} — a tutorial tree holds {}, base/** and steps/**",
+            dir.display(),
+            snapshot::MANIFEST_FILE
+          )))
+        }
       }
     }
     Ok(Self {
@@ -253,14 +278,14 @@ fn check_overlay_reverts(
     else {
       continue;
     };
-    // no recorded pair for this (step, file) — a new overlay file, nothing to
-    // protect yet
-    let (Some(recorded_before), Some(recorded_after)) = (
-      expected.before(step_id, path),
-      expected.after(step_id, path),
-    ) else {
+    // no recorded snapshot for this (step, file) — a new overlay file, nothing
+    // to protect yet
+    let Some(recorded_after) = expected.after(step_id, path) else {
       continue;
     };
+    // a recorded created file has no base/<file>; an empty before still trips
+    // the guard on anything the fresh overlay would remove
+    let recorded_before = expected.before(step_id, path).unwrap_or_default();
     let reverted = overlay_reverted_lines(recorded_before, recorded_after, fresh_before, after);
     if !reverted.is_empty() {
       return Err(Error::Runner(format!(
@@ -377,4 +402,65 @@ fn cargo_test(work_dir: &Path, target_dir: &Path, test_name: &str) -> Result<Tes
     stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     seconds: started.elapsed().as_secs(),
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{check_overlay_reverts, ExpectedTree};
+  use crate::manifest::Manifest;
+  use crate::mutations::Applied;
+  use std::collections::BTreeMap;
+
+  /// a tree recording one created file — the case with no `base/<file>`
+  fn expected(step: &str, file: &str, after: &str) -> ExpectedTree {
+    let manifest: Manifest = serde_json::from_str(&format!(
+      r#"{{"schemaVersion":3,"id":"t","title":"T","steps":[{{"id":"{step}","task":"",
+       "mutations":[{{"file":"{file}","created":true}}],"preconditions":[],"assertions":[]}}]}}"#
+    ))
+    .unwrap();
+    let mut steps = BTreeMap::new();
+    steps.insert((step.to_string(), file.to_string()), after.to_string());
+    ExpectedTree {
+      manifest: Some(manifest),
+      base: BTreeMap::new(),
+      steps,
+    }
+  }
+
+  fn overlaid(path: &str, before: &str, after: &str) -> Vec<Applied> {
+    vec![Applied::File {
+      path: path.to_string(),
+      before: Some(before.to_string()),
+      after: after.to_string(),
+    }]
+  }
+
+  // the file the tutorial created now exists in the re-vendored base: the
+  // overlay overwrites it, so the guard has to run with an empty before
+  #[test]
+  fn a_created_file_still_trips_the_revert_guard() {
+    let err = check_overlay_reverts(
+      &expected("one", "src/app.ts", "line_a\nline_b\n"),
+      "one",
+      &overlaid(
+        "src/app.ts",
+        "line_a\nupstream\nline_b\n",
+        "line_a\nline_b\n",
+      ),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("re-vendor guard"), "{err}");
+    assert!(err.contains("upstream"), "{err}");
+  }
+
+  #[test]
+  fn an_unrecorded_overlay_file_is_not_guarded() {
+    check_overlay_reverts(
+      &expected("one", "src/app.ts", "x\n"),
+      "one",
+      &overlaid("src/other.ts", "gone\n", ""),
+    )
+    .unwrap();
+  }
 }

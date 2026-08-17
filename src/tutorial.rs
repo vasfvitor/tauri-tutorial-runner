@@ -199,6 +199,11 @@ pub fn load_tutorial(dir: &Path) -> Result<Tutorial> {
   let mut tutorial: Tutorial = serde_norway::from_str(&fs::read_to_string(&yaml_path)?)?;
   tutorial.dir = dir.to_path_buf();
 
+  validate_id("tutorial", &tutorial.id)?;
+  for step in &tutorial.steps {
+    validate_id("step", &step.id)?;
+  }
+
   tutorial.fixture_dir = dir.join(&tutorial.base.fixture);
   if !tutorial.fixture_dir.exists() {
     return Err(Error::Validate(format!(
@@ -276,4 +281,88 @@ pub fn load_tutorial(dir: &Path) -> Result<Tutorial> {
   }
 
   Ok(tutorial)
+}
+
+// ids are path components: the tutorial id names `.tatu/out/<id>`, which a run
+// replaces wholesale, and a step id names `steps/<step>/` inside the tree —
+// one that escapes would wipe or write outside either
+fn validate_id(kind: &str, id: &str) -> Result<()> {
+  let fault = if id.is_empty() {
+    "is empty"
+  } else if id == "." || id == ".." {
+    "is a directory traversal component"
+  } else if id.contains('/') || id.contains('\\') {
+    "contains a path separator"
+  } else if id.contains(':') {
+    "names a drive"
+  } else {
+    return Ok(());
+  };
+  Err(Error::Validate(format!(
+    "tutorial.yaml: {kind} id \"{id}\" {fault} — ids are used as path components"
+  )))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::load_tutorial;
+  use std::fs;
+  use std::path::PathBuf;
+
+  struct TempTutorial(PathBuf);
+
+  impl TempTutorial {
+    fn new(label: &str, id: &str, step_id: &str) -> Self {
+      let dir = std::env::temp_dir().join(format!("tatu-id-{label}-{}", std::process::id()));
+      let _ = fs::remove_dir_all(&dir);
+      fs::create_dir_all(dir.join("base")).expect("temp dir");
+      fs::write(
+        dir.join("tutorial.yaml"),
+        // single-quoted so a backslash in an id stays literal
+        format!(
+          "id: '{id}'\ntitle: T\nbase:\n  fixture: base\nsteps:\n  - id: '{step_id}'\n    task: do it\n"
+        ),
+      )
+      .expect("write tutorial.yaml");
+      Self(dir)
+    }
+  }
+
+  impl Drop for TempTutorial {
+    fn drop(&mut self) {
+      let _ = fs::remove_dir_all(&self.0);
+    }
+  }
+
+  #[test]
+  fn a_tutorial_id_that_is_not_a_path_component_is_rejected() {
+    for (i, id) in ["", "..", ".", "../..", "a/b", "a\\b", "C:"]
+      .into_iter()
+      .enumerate()
+    {
+      let temp = TempTutorial::new(&format!("tid{i}"), id, "one");
+      let err = load_tutorial(&temp.0)
+        .expect_err(&format!("accepted tutorial id \"{id}\""))
+        .to_string();
+      assert!(err.contains("tutorial id"), "{err}");
+    }
+  }
+
+  #[test]
+  fn a_step_id_that_is_not_a_path_component_is_rejected() {
+    for (i, id) in ["", "..", ".", "a/b", "a\\b", "C:"].into_iter().enumerate() {
+      let temp = TempTutorial::new(&format!("sid{i}"), "t", id);
+      let err = load_tutorial(&temp.0)
+        .expect_err(&format!("accepted step id \"{id}\""))
+        .to_string();
+      assert!(err.contains("step id"), "{err}");
+    }
+  }
+
+  #[test]
+  fn plain_ids_load() {
+    let temp = TempTutorial::new("ok", "greet-command", "verify-greet");
+    let tutorial = load_tutorial(&temp.0).expect("loads");
+    assert_eq!(tutorial.id, "greet-command");
+  }
 }
