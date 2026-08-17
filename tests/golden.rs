@@ -47,8 +47,9 @@ fn check_fixtures(tutorial: &Tutorial, fixtures: &[(&str, &str, &str)], bless: b
       .join(fixture);
     let golden = match std::fs::read_to_string(&path) {
       Ok(s) => s.replace("\r\n", "\n"),
-      // a fixture being added for the first time only exists under bless
-      Err(_) if bless => String::new(),
+      // a fixture being added for the first time only exists under bless; any
+      // other read failure is a broken fixture, not a new one
+      Err(e) if bless && e.kind() == std::io::ErrorKind::NotFound => String::new(),
       Err(e) => panic!("fixture {fixture} unreadable: {e}"),
     };
     if bless && generated != golden {

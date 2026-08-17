@@ -75,11 +75,13 @@ fn a_written_tree_reads_back_unchanged() {
   write_run_schema(temp.path()).expect("run schema");
   assert!(temp.path().join(SCHEMA_FILE).exists());
 
-  let normalized = normalize_tree(&read).expect("normalize");
+  let normalized = normalize_tree(read).expect("normalize");
   assert!(!normalized.manifest.contains("advisory"));
   assert!(normalized.manifest.contains(SCHEMA_REF));
   assert_eq!(
-    normalize_tree(&normalized).expect("normalize").manifest,
+    normalize_tree(normalized.clone())
+      .expect("normalize")
+      .manifest,
     normalized.manifest
   );
 }

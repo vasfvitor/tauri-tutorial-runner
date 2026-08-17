@@ -114,10 +114,10 @@ pub fn normalized(json: &str) -> Result<String> {
 
 /// The committed form of a tree: the manifest through the typed round-trip,
 /// snapshots as read (already LF-normalized).
-pub fn normalize_tree(tree: &Tree) -> Result<Tree> {
+pub fn normalize_tree(tree: Tree) -> Result<Tree> {
   Ok(Tree {
     manifest: normalized(&tree.manifest)?,
-    files: tree.files.clone(),
+    files: tree.files,
   })
 }
 
@@ -181,12 +181,11 @@ pub fn bless_expected(tutorial: &Tutorial) -> Result<()> {
   let manifest: Manifest = serde_json::from_str(&fresh.manifest)?;
   let declared: Vec<&str> = tutorial.steps.iter().map(|s| s.id.as_str()).collect();
   check_blessable(&manifest, &declared)?;
-  snapshot::check_tree_consistent(&manifest, &fresh.files)?;
   if manifest.advisory == Some(true) {
     println!("note: blessing an advisory (host) run — authoritative manifests come from `tatu run` in the container");
   }
   let expected = tutorial.expected_dir();
-  check_bless_target(&expected, &tutorial.dir)?;
+  check_bless_target(&expected)?;
   snapshot::write_tree(&expected, &strip_run_environment(manifest), &fresh.files)?;
   println!("wrote {}", expected.display());
   Ok(())
@@ -224,17 +223,9 @@ fn check_blessable(manifest: &Manifest, declared_steps: &[&str]) -> Result<()> {
   Ok(())
 }
 
-// bless replaces the whole expected tree — the target must be the tutorial's
-// own expected/ dir, and whatever it replaces must itself be a tutorial tree
-fn check_bless_target(target: &Path, tutorial_dir: &Path) -> Result<()> {
-  if target.file_name() != Some(std::ffi::OsStr::new("expected"))
-    || target.parent() != Some(tutorial_dir)
-  {
-    return Err(Error::Runner(format!(
-      "refusing to bless into {} — the target must be <tutorial dir>/expected",
-      target.display()
-    )));
-  }
+// bless replaces the whole expected tree — whatever it replaces must itself
+// be a tutorial tree
+fn check_bless_target(target: &Path) -> Result<()> {
   if target.exists() && !target.join(snapshot::MANIFEST_FILE).exists() {
     return Err(Error::Runner(format!(
       "refusing to replace {} — it holds no {}, so it may not be a tutorial tree",
@@ -252,9 +243,13 @@ fn read(root: &Path, hint: &str) -> Result<Tree> {
 // a tree only means anything while its manifest and its snapshots agree, so
 // the self-check runs before either side of a comparison is trusted
 fn normalized_tree(root: &Path, hint: &str) -> Result<Tree> {
-  let tree = normalize_tree(&read(root, hint)?)?;
-  snapshot::check_tree_consistent(&serde_json::from_str(&tree.manifest)?, &tree.files)?;
-  Ok(tree)
+  let tree = read(root, hint)?;
+  let manifest = strip_run_environment(serde_json::from_str(&tree.manifest)?);
+  snapshot::check_tree_consistent(&manifest, &tree.files)?;
+  Ok(Tree {
+    manifest: render(&manifest)?,
+    files: tree.files,
+  })
 }
 
 pub fn platform() -> &'static str {
@@ -330,15 +325,14 @@ mod tests {
   #[test]
   fn committed_expected_trees_are_normalized_fixed_points() {
     let tutorials = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tutorials");
+    let mut declared = 0;
     let mut seen = 0;
-    let mut pending = 0;
     for entry in std::fs::read_dir(tutorials).unwrap() {
       let dir = entry.unwrap().path();
-      if !dir.join("expected").is_dir() {
-        // v2 golden awaiting the re-bless onto v3
-        pending += usize::from(dir.join("expected.manifest.json").exists());
+      if !dir.join("tutorial.yaml").exists() {
         continue;
       }
+      declared += 1;
       let tree = super::snapshot::read_tree(&dir.join("expected")).unwrap();
       assert_eq!(
         normalized(&tree.manifest).unwrap(),
@@ -349,6 +343,7 @@ mod tests {
       super::snapshot::check_tree_consistent(&manifest(&tree.manifest), &tree.files).unwrap();
       seen += 1;
     }
-    assert!(seen >= 2 || pending >= 2, "expected trees not found");
+    assert!(declared > 0, "no tutorials found");
+    assert_eq!(seen, declared, "every tutorial carries a blessed tree");
   }
 }
