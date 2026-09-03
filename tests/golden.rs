@@ -11,9 +11,9 @@
 use std::path::Path;
 
 use tauri_tutorial_runner::harness::{generate_ipc_test_file, sanitize, IpcCase};
-use tauri_tutorial_runner::tutorial::{load_tutorial, Harness, Step, Tutorial};
+use tauri_tutorial_runner::tutorial::{load_tutorial, Step, Tutorial};
 
-fn generate(tutorial: &Tutorial, step: &Step, phase: &str) -> String {
+fn generate(step: &Step, phase: &str) -> String {
   let list = match phase {
     "pre" => &step.preconditions,
     _ => &step.assertions,
@@ -30,8 +30,8 @@ fn generate(tutorial: &Tutorial, step: &Step, phase: &str) -> String {
       assertion: a,
     })
     .collect();
-  let harness = Harness::resolve(step.harness.as_ref(), tutorial.harness.as_ref());
-  generate_ipc_test_file(harness.as_ref(), &cases)
+  // the pool bases all scaffold as tatu-app, whose lib is tatu_app_lib
+  generate_ipc_test_file("tatu_app_lib", &cases)
 }
 
 fn check_fixtures(tutorial: &Tutorial, fixtures: &[(&str, &str, &str)], bless: bool) {
@@ -41,7 +41,7 @@ fn check_fixtures(tutorial: &Tutorial, fixtures: &[(&str, &str, &str)], bless: b
       .iter()
       .find(|s| s.id == *step_id)
       .expect("fixture step exists");
-    let generated = generate(tutorial, step, phase);
+    let generated = generate(step, phase);
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
       .join("tests/fixtures/generated")
       .join(fixture);
@@ -102,8 +102,8 @@ fn generated_tests_match_proven_fixtures() {
     bless,
   );
 
-  // plugin-store's permissions phases lock the builder-form plugin line, the
-  // step/tutorial harness inheritance and the `succeeds` expect block
+  // plugin-store's permissions phases lock the `succeeds` expect block and a
+  // plugin command denied before its capability is granted
   let store = load_tutorial(
     Path::new(env!("CARGO_MANIFEST_DIR"))
       .join("tutorials/plugin-store")

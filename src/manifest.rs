@@ -55,6 +55,9 @@ pub struct StepRecord {
   pub assertions: Vec<ResultRecord>,
 }
 
+/// One record per file or per command. A command record is followed by the
+/// file records that command produced, so a consumer renders the command and
+/// then its diffs; a record never carries both.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MutationRecord {
   /// the mutated file; its content after this step is `steps/<step>/<file>`

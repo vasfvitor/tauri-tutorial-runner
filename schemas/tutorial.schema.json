@@ -13,16 +13,6 @@
     "base": {
       "$ref": "#/$defs/Base"
     },
-    "harness": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Harness"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "steps": {
       "type": "array",
       "items": {
@@ -51,40 +41,6 @@
         "fixture"
       ]
     },
-    "Harness": {
-      "description": "A step-level harness inherits from the tutorial-level one per field:\n`handlers`/`plugins` replace when present, `prelude` appends — a step\nusually adds a command or swaps a plugin, not a fresh world.",
-      "type": "object",
-      "properties": {
-        "prelude": {
-          "description": "verbatim Rust included in generated tests (e.g. a copy of an app command)",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "handlers": {
-          "description": "names passed to tauri::generate_handler![]",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
-        },
-        "plugins": {
-          "description": "plugins registered on the mock builder: a bare crate name gets\n`::init()`, an entry with a call (`crate::Builder::default().build()`)\nis used verbatim",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": false
-    },
     "Step": {
       "type": "object",
       "properties": {
@@ -94,16 +50,6 @@
         "task": {
           "description": "natural-language instruction — doubles as the agent-eval prompt",
           "type": "string"
-        },
-        "harness": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Harness"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "preconditions": {
           "type": "array",
@@ -203,6 +149,18 @@
           },
           "required": [
             "ok_contains"
+          ]
+        },
+        {
+          "description": "the command must fail with an error carrying this substring — for\nfailures that are not ACL denials (a plugin scope refusal, say)",
+          "type": "object",
+          "properties": {
+            "err_contains": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "err_contains"
           ]
         }
       ]

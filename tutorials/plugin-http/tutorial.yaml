@@ -12,23 +12,15 @@ base:
   # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
   fixture: ../../bases/vanilla-ts@4.7.3
 
-harness:
-  prelude: |
-    #[tauri::command]
-    fn greet(name: &str) -> String {
-        format!("Hello, {}! You've been greeted from Rust!", name)
-    }
-  handlers: [greet]
-  plugins: [tauri_plugin_http]
-
 steps:
   - id: add-cargo-dep
     task: >
       Add the tauri-plugin-http crate to the Rust backend's dependencies in
       `src-tauri/Cargo.toml`.
     mutations:
+      # pin the major so the recorded manifest doesn't drift on every plugin release
       - engine: shell
-        run: cargo add tauri-plugin-http
+        run: cargo add tauri-plugin-http@2
         cwd: src-tauri
 
   - id: register-plugin
@@ -86,7 +78,8 @@ steps:
         command: plugin:http|fetch
         args: *in_scope_fetch
         expect: succeeds
-      # the deny entry wins over the allow wildcard
+      # the deny entry wins over the allow wildcard, so the scope rejects the
+      # URL after the ACL has already let the command through
       - kind: ipc-acl
         command: plugin:http|fetch
         args:
@@ -94,8 +87,8 @@ steps:
             method: GET
             url: "https://private.tauri.app/data.json"
             headers: []
-        expect: denied
-      # a URL outside the allow list is rejected by the scope
+        expect: { err_contains: "url not allowed on the configured scope" }
+      # a URL outside the allow list is rejected by the scope, not the ACL
       - kind: ipc-acl
         command: plugin:http|fetch
         args:
@@ -103,7 +96,7 @@ steps:
             method: GET
             url: "https://example.com/"
             headers: []
-        expect: denied
+        expect: { err_contains: "url not allowed on the configured scope" }
 
   - id: usage-js
     task: >
@@ -121,17 +114,6 @@ steps:
       returns the HTTP status of a URL.
     mutations:
       - engine: overlay
-    harness:
-      # appends to the tutorial prelude; handlers replace to pick up the command
-      prelude: |
-        #[tauri::command]
-        async fn fetch_status(url: String) -> Result<u16, String> {
-            let res = tauri_plugin_http::reqwest::get(&url)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(res.status().as_u16())
-        }
-      handlers: [greet, fetch_status]
     assertions:
       - kind: ipc-local
         command: fetch_status

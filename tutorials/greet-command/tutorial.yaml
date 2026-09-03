@@ -16,13 +16,6 @@ steps:
     task: >
       Confirm the scaffold's `greet` command answers over IPC: invoking `greet`
       with the name "Tauri" returns the greeting string.
-    harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
     assertions:
       - kind: ipc-local
         command: greet
@@ -35,14 +28,6 @@ steps:
       plugin with the app builder. The greet command must keep working.
     mutations:
       - engine: overlay
-    harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
-      plugins: [tauri_plugin_fs]
     assertions:
       - kind: ipc-local
         command: greet
@@ -54,14 +39,6 @@ steps:
       Let the frontend read files from the app's data directory using the fs
       plugin. Reading must fail before the capability is granted and succeed
       after.
-    harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
-      plugins: [tauri_plugin_fs]
     preconditions:
       # the teaching beat: show the ACL denial before granting the permission
       - kind: ipc-acl

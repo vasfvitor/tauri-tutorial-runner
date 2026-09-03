@@ -12,23 +12,15 @@ base:
   # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
   fixture: ../../bases/vanilla-ts@4.7.3
 
-harness:
-  prelude: |
-    #[tauri::command]
-    fn greet(name: &str) -> String {
-        format!("Hello, {}! You've been greeted from Rust!", name)
-    }
-  handlers: [greet]
-  plugins: ["tauri_plugin_store::Builder::default().build()"]
-
 steps:
   - id: add-cargo-dep
     task: >
       Add the tauri-plugin-store crate to the Rust backend's dependencies in
       `src-tauri/Cargo.toml`.
     mutations:
+      # pin the major so the recorded manifest doesn't drift on every plugin release
       - engine: shell
-        run: cargo add tauri-plugin-store
+        run: cargo add tauri-plugin-store@2
         cwd: src-tauri
 
   - id: register-plugin

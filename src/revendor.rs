@@ -92,7 +92,7 @@ pub fn revendor(target: &Path) -> Result<()> {
   report(&previous, &fresh);
   println!("re-vendored {}", target.display());
   println!(
-    "next: `tatu check` every tutorial using this base (the re-vendor guard reports overlay conflicts), review, then `tatu bless`"
+    "next: re-apply the configure seam to src-tauri/src/lib.rs (`tatu validate` enforces it), then `tatu check` every tutorial using this base (the re-vendor guard reports overlay conflicts), review, then `tatu bless`"
   );
   Ok(())
 }

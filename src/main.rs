@@ -4,7 +4,7 @@ use std::process::exit;
 use clap::{Parser, Subcommand};
 
 use tauri_tutorial_runner::error::{Error, Result};
-use tauri_tutorial_runner::runner::{run_tutorial, RunOptions};
+use tauri_tutorial_runner::runner::{run_tutorial, validate_seam, RunOptions};
 use tauri_tutorial_runner::tutorial::{load_tutorial, Tutorial};
 use tauri_tutorial_runner::{manifest, revendor, schema, snapshot};
 
@@ -28,13 +28,16 @@ enum Commands {
   Check {
     /// tutorial directory (contains tutorial.yaml)
     dir: PathBuf,
-    /// run a single step only
+    /// run a single step only (its mutations apply on the base, so a plugin
+    /// `denied` precondition fails with `Plugin not found` by design)
     #[arg(long)]
     step: Option<String>,
   },
   /// Authoritative run (container); writes the manifest
   Run {
     dir: PathBuf,
+    /// run a single step only (its mutations apply on the base, so a plugin
+    /// `denied` precondition fails with `Plugin not found` by design)
     #[arg(long)]
     step: Option<String>,
     /// set inside the pinned container image
@@ -104,10 +107,7 @@ fn run() -> Result<()> {
         },
       )
     }
-    Commands::Validate { dir } => {
-      load_and_announce(&dir)?;
-      Ok(())
-    }
+    Commands::Validate { dir } => validate_seam(&load_and_announce(&dir)?),
     Commands::Revendor { dir } => revendor::revendor(&dir),
     Commands::Verify { dir } => manifest::verify_expected(&load_and_announce(&dir)?),
     Commands::Bless { dir } => manifest::bless_expected(&load_and_announce(&dir)?),

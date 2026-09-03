@@ -22,7 +22,7 @@ The CLI binary is `tatu`:
 
 ```
 cargo run -q -- check tutorials/greet-command      # advisory run on your machine
-cargo run -q -- check tutorials/greet-command --step verify-greet   # one step only
+cargo run -q -- check tutorials/greet-command --step verify-greet   # that step's mutations on the base alone
 cargo run -q -- validate tutorials/rsbuild         # parse + validate only
 cargo run -q -- verify tutorials/greet-command     # last run's tree vs expected
 cargo run -q -- bless tutorials/greet-command      # accept the last run's tree
@@ -67,15 +67,38 @@ tutorials/<id>/
     steps/<step>/<file>    # what it holds after that step
 ```
 
+Every `src-tauri/src/lib.rs`, in the bases and in the overlays, holds the app's
+builder configuration in one function:
+
+```rust
+pub fn configure<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R>
+```
+
+The plugins, the invoke handlers, the managed state and the setup hook all live
+there, and `run()` calls it with `tauri::Builder::default()`. Generated tests
+build the app from that same function on `tauri::test::MockRuntime`, so what the
+assertions exercise is the code readers see and not a copy of it. Commands that
+take an `AppHandle` are generic over the runtime for the same reason.
+
 Overlays are the authoring surface; the runner records the content of every
 mutated file before and after the step, and consumers derive the diffs readers
 see from that pair. The run proves the pair too: a recorded before must match
 what the step actually found on disk, so a shell command or an assertion that
 rewrites a file between two steps fails the run instead of quietly corrupting
-the record. The `bases/` trees are unmodified create-tauri-app output, generated
-with the app name `tatu-app` and shared across tutorials; re-vendoring one is an
-explicit, reviewed operation, and the runner fails when a re-vendored base
-diverges from an overlay outside what the tutorial recorded.
+the record. A shell mutation records the text files its command changed,
+excluding lockfiles, `package.json` and build output, so a `cargo add` step
+renders as a diff like any overlay. A step records each file only once, so an
+overlay and a `cargo add` that touch the same file belong in different steps. A
+recorded manifest must not drift on every release, so the `cargo add` commands
+pin the major version; `pnpm add` writes the resolved version whatever it is
+asked for, which is why `package.json` stays out of the record.
+
+The `bases/` trees are unmodified create-tauri-app output apart from the
+`configure` seam in `lib.rs`, generated with the app name `tatu-app` and shared
+across tutorials. Re-vendoring one is an explicit, reviewed operation that has to
+re-apply the seam by hand: `tatu validate` refuses a base or an overlay whose
+`lib.rs` does not define `configure`. The runner also fails when a re-vendored
+base diverges from an overlay outside what the tutorial recorded.
 
 `tatu revendor bases/<template>@<version>` re-scaffolds a pool base: it requires
 that exact create-tauri-app version installed (`cargo install

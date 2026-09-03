@@ -20,13 +20,6 @@ steps:
     mutations:
       - engine: shell
         run: pnpm install --no-frozen-lockfile
-    harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
     assertions:
       - kind: shell
         run: pnpm build
@@ -43,13 +36,6 @@ steps:
       defaults.
     mutations:
       - engine: overlay
-    harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
     assertions:
       - kind: ipc-local
         command: greet
@@ -88,74 +74,28 @@ steps:
       `SetupState` behind a `set_complete` command; when both sides report
       done, close the splashscreen window and show the main window.
     mutations:
+      # pin the major so the recorded manifest doesn't drift on every tokio release
       - engine: shell
-        run: cargo add tokio -F time
+        run: cargo add tokio@1 -F time
         cwd: src-tauri
       - engine: overlay
-    harness:
-      # test-side copies of the app's state and commands; `set_complete` is
-      # generic over the runtime so it also compiles for MockRuntime
-      # (the app's own lib.rs keeps the concrete AppHandle — tauri#12077)
-      prelude: |
-        use std::sync::Mutex;
-        use tauri::{AppHandle, Runtime, State};
-
-        struct SetupState {
-            frontend_task: bool,
-            backend_task: bool,
-        }
-
-        #[tauri::command]
-        fn greet(name: String) -> String {
-            format!("Hello {name} from Rust!")
-        }
-
-        #[tauri::command]
-        async fn set_complete<R: Runtime>(
-            app: AppHandle<R>,
-            state: State<'_, Mutex<SetupState>>,
-            task: String,
-        ) -> Result<(), ()> {
-            let mut state_lock = state.lock().unwrap();
-            match task.as_str() {
-                "frontend" => state_lock.frontend_task = true,
-                "backend" => state_lock.backend_task = true,
-                _ => panic!("invalid task completed!"),
-            }
-            if state_lock.backend_task && state_lock.frontend_task {
-                let splash_window = app.get_webview_window("splashscreen").unwrap();
-                let main_window = app.get_webview_window("main").unwrap();
-                splash_window.close().unwrap();
-                main_window.show().unwrap();
-            }
-            Ok(())
-        }
-      handlers: [greet, set_complete]
     assertions:
       - kind: ipc-local
         command: greet
         args: { name: "Tauri" }
         expect: { ok: "Hello Tauri from Rust!" }
       - kind: ipc-local
-        # one side done: the state flips but no window is touched yet
+        # one side done: the app's own state flips but no window is touched yet
         command: set_complete
         args: { task: "frontend" }
-        setup: |
-          app.manage(Mutex::new(SetupState {
-              frontend_task: false,
-              backend_task: false,
-          }));
         expect: { ok: null }
       - kind: ipc-local
-        # both sides done: the splashscreen closes and main is shown
+        # both sides done: the frontend side follows the backend one, so the
+        # splashscreen closes and main is shown
         command: set_complete
         args: { task: "frontend" }
         setup: |
-          app.manage(Mutex::new(SetupState {
-              frontend_task: false,
-              backend_task: true,
-          }));
-          tauri::WebviewWindowBuilder::new(&app, "splashscreen", Default::default())
-              .build()
-              .unwrap();
+          // the config windows exist; the backend side reports first, over IPC
+          assert!(app.get_webview_window("splashscreen").is_some(), "the splashscreen window must come from the config");
+          tatu_invoke(&webview, "set_complete", r#"{"task":"backend"}"#).expect("backend side reported done");
         expect: { ok: null }

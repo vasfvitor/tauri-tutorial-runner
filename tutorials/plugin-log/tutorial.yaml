@@ -12,24 +12,15 @@ base:
   # shared vendored create-tauri-app scaffold (vanilla-ts, pnpm), app name tatu-app
   fixture: ../../bases/vanilla-ts@4.7.3
 
-# no plugins here: the log plugin installs a process-global logger, so the
-# mock app registers it only where a log command actually runs
-harness:
-  prelude: |
-    #[tauri::command]
-    fn greet(name: &str) -> String {
-        format!("Hello, {}! You've been greeted from Rust!", name)
-    }
-  handlers: [greet]
-
 steps:
   - id: add-cargo-dep
     task: >
       Add the tauri-plugin-log crate to the Rust backend's dependencies in
       `src-tauri/Cargo.toml`.
     mutations:
+      # pin the major so the recorded manifest doesn't drift on every plugin release
       - engine: shell
-        run: cargo add tauri-plugin-log
+        run: cargo add tauri-plugin-log@2
         cwd: src-tauri
 
   - id: register-plugin
@@ -68,10 +59,6 @@ steps:
     task: >
       Let the frontend log: the log command must be denied before the
       capability grants the permission and succeed after.
-    harness:
-      # inherits the tutorial prelude/handlers; only the phases that actually
-      # run a log command register the process-global logger
-      plugins: ["tauri_plugin_log::Builder::new().build()"]
     preconditions:
       # the teaching beat: the ACL denies plugin commands until granted
       - kind: ipc-acl

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -8,7 +9,10 @@ use crate::tutorial::Tutorial;
 
 /// What an applier did. File mutations hand back the content they saw on
 /// disk — the runner records that pair as snapshots, and consumers derive the
-/// diff from it. Shell mutations stay file-blind, as in v2.
+/// diff from it. Shell mutations hand back the same pair for every text file
+/// the command changed, minus lockfiles and build output; the runner records
+/// those as ordinary file snapshots after the command record, so `cargo add`
+/// steps render as diffs instead of a bare command string.
 #[derive(Debug)]
 pub enum Applied {
   File {
@@ -19,7 +23,17 @@ pub enum Applied {
   Shell {
     command: String,
     cwd: String,
+    files: Vec<FileChange>,
   },
+}
+
+/// One file a shell mutation changed, in the same shape a file mutation
+/// records: `before` is `None` when the command created the file.
+#[derive(Debug)]
+pub struct FileChange {
+  pub path: String,
+  pub before: Option<String>,
+  pub after: String,
 }
 
 // Overlays are the authoring surface; the file content on either side of the
@@ -69,11 +83,76 @@ pub fn apply_json_merge(
   }])
 }
 
+/// Directories a shell snapshot never descends into, matched by bare name at
+/// any depth. Dependency stores and build output (`node_modules`, `target`,
+/// `dist`, `.pnpm-store`, `gen`) are not tutorial content, and `.tatu` and
+/// `tests` are the harness's own scratch. `gen` and `tests` are safe to match
+/// by bare name because the only ones a scaffold has live under `src-tauri/`.
+pub const SHELL_IGNORE_DIRS: &[&str] = &[
+  "node_modules",
+  "target",
+  "dist",
+  ".tatu",
+  ".pnpm-store",
+  "gen",
+  "tests",
+];
+
+/// Files a shell snapshot never records. A lockfile is hundreds of KB of
+/// resolver noise no reader ever sees. `package.json` is treated like one:
+/// pnpm writes the resolved version whatever range you ask for, so recording
+/// it would drift on every plugin release, and the docs render JS installs as
+/// package-manager tabs anyway. (`cargo add pkg@2` writes `"2"`, so Cargo.toml
+/// stays recorded.) The harness's own manifest and any `*.log` output are not
+/// tutorial content either.
+pub const SHELL_IGNORE_FILES: &[&str] = &[
+  "Cargo.lock",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "package.json",
+  "tatu-test-manifest.xml",
+];
+
+// The work tree as text, keyed by slash path. Binary files are dropped: a
+// snapshot is text, so a file that does not decode has nothing to record.
+fn text_snapshot(work_dir: &Path) -> Result<BTreeMap<String, String>> {
+  let mut files = BTreeMap::new();
+  let walk = walkdir::WalkDir::new(work_dir)
+    .sort_by_file_name()
+    .into_iter()
+    // depth 0 is the work dir itself; rejecting it would skip the whole walk
+    .filter_entry(|entry| {
+      entry.depth() == 0
+        || !entry.file_type().is_dir()
+        || !SHELL_IGNORE_DIRS.contains(&entry.file_name().to_string_lossy().as_ref())
+    });
+  for entry in walk {
+    let entry = entry.map_err(|e| Error::Runner(e.to_string()))?;
+    if !entry.file_type().is_file() {
+      continue;
+    }
+    let name = entry.file_name().to_string_lossy().into_owned();
+    if SHELL_IGNORE_FILES.contains(&name.as_str()) || name.ends_with(".log") {
+      continue;
+    }
+    if let Ok(text) = String::from_utf8(fs::read(entry.path())?) {
+      files.insert(helpers::rel_slash(work_dir, entry.path()), text);
+    }
+  }
+  Ok(files)
+}
+
+// A shell mutation is recorded by what it did to the work tree, not by its
+// command string: snapshot before and after, and the difference is the record.
 pub fn apply_shell(run: &str, cwd: Option<&str>, work_dir: &Path) -> Result<Vec<Applied>> {
   let dir = match cwd {
     Some(sub) => work_dir.join(sub),
     None => work_dir.to_path_buf(),
   };
+  let before_tree = text_snapshot(work_dir)?;
   let output = shell_command(run).current_dir(&dir).output()?;
   if !output.status.success() {
     return Err(Error::Runner(format!(
@@ -82,9 +161,31 @@ pub fn apply_shell(run: &str, cwd: Option<&str>, work_dir: &Path) -> Result<Vec<
       String::from_utf8_lossy(&output.stderr)
     )));
   }
+  let after_tree = text_snapshot(work_dir)?;
+
+  for path in before_tree.keys() {
+    if !after_tree.contains_key(path) {
+      return Err(Error::Runner(format!(
+        "shell mutation deleted {path} — snapshots record content, not deletions; restructure the tutorial so the file survives"
+      )));
+    }
+  }
+  // BTreeMap order, so the recorded files read in path order
+  let mut files = Vec::new();
+  for (path, after) in after_tree {
+    match before_tree.get(&path) {
+      Some(before) if *before == after => {}
+      before => files.push(FileChange {
+        path,
+        before: before.cloned(),
+        after,
+      }),
+    }
+  }
   Ok(vec![Applied::Shell {
     command: run.to_string(),
     cwd: cwd.unwrap_or(".").to_string(),
+    files,
   }])
 }
 
@@ -174,7 +275,109 @@ pub fn overlay_reverted_lines(
 
 #[cfg(test)]
 mod tests {
-  use super::{deep_merge, overlay_reverted_lines};
+  use super::{apply_shell, deep_merge, overlay_reverted_lines, Applied};
+  use std::fs;
+  use std::path::{Path, PathBuf};
+
+  // one dir per test so the suite can run in parallel; the pid keeps
+  // concurrent `cargo test` invocations apart
+  fn temp_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tatu-mutations-{}-{tag}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+  }
+
+  fn write(root: &Path, rel: &str, content: &str) {
+    let path = root.join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, content).unwrap();
+  }
+
+  // one shell record carrying the command verbatim, plus the files it changed
+  fn shell_files(applied: Vec<Applied>, run: &str) -> Vec<(String, Option<String>, String)> {
+    let [Applied::Shell {
+      command,
+      cwd,
+      files,
+    }] = &applied[..]
+    else {
+      panic!("expected one shell mutation, got {applied:?}");
+    };
+    assert_eq!(command, run);
+    assert_eq!(cwd, ".");
+    files
+      .iter()
+      .map(|f| (f.path.clone(), f.before.clone(), f.after.clone()))
+      .collect()
+  }
+
+  #[test]
+  fn a_shell_mutation_records_the_files_it_wrote() {
+    let dir = temp_dir("wrote");
+    write(&dir, "src/a.txt", "original\n");
+    let run = if cfg!(windows) {
+      "echo new> src/new.txt && echo changed> src/a.txt"
+    } else {
+      "printf 'new\\n' > src/new.txt && printf 'changed\\n' > src/a.txt"
+    };
+    let files = shell_files(apply_shell(run, None, &dir).unwrap(), run);
+    let paths: Vec<&str> = files.iter().map(|(p, _, _)| p.as_str()).collect();
+    assert_eq!(paths, ["src/a.txt", "src/new.txt"]);
+    let (_, edited_before, edited_after) = &files[0];
+    assert_eq!(edited_before.as_deref(), Some("original\n"));
+    assert!(edited_after.contains("changed"), "{edited_after}");
+    let (_, created_before, created_after) = &files[1];
+    assert_eq!(created_before.as_deref(), None);
+    assert!(created_after.contains("new"), "{created_after}");
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  // lockfiles, dependency stores and logs are noise a reader never sees, so a
+  // command that only touches them records nothing at all
+  #[test]
+  fn ignored_paths_are_not_recorded() {
+    let dir = temp_dir("ignored");
+    let run = if cfg!(windows) {
+      "mkdir node_modules && echo x> node_modules/x.txt && echo y> Cargo.lock && echo z> foo.log && echo p> package.json"
+    } else {
+      "mkdir -p node_modules && printf 'x\\n' > node_modules/x.txt && printf 'y\\n' > Cargo.lock && printf 'z\\n' > foo.log && printf 'p\\n' > package.json"
+    };
+    assert!(shell_files(apply_shell(run, None, &dir).unwrap(), run).is_empty());
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn a_deleted_file_is_an_error() {
+    let dir = temp_dir("deleted");
+    write(&dir, "src/a.txt", "original\n");
+    let run = if cfg!(windows) {
+      "del src\\a.txt"
+    } else {
+      "rm src/a.txt"
+    };
+    let err = apply_shell(run, None, &dir).unwrap_err().to_string();
+    assert!(err.contains("deleted"), "{err}");
+    assert!(err.contains("src/a.txt"), "{err}");
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  // a snapshot is text; a file that does not decode has nothing to record
+  #[test]
+  fn a_binary_file_is_skipped() {
+    let dir = temp_dir("binary");
+    let work = dir.join("work");
+    fs::create_dir_all(&work).unwrap();
+    fs::write(dir.join("bin.dat"), [0x00u8, 0xff, 0xfe, 0x80]).unwrap();
+    let run = if cfg!(windows) {
+      "copy ..\\bin.dat bin.dat"
+    } else {
+      "cp ../bin.dat bin.dat"
+    };
+    assert!(shell_files(apply_shell(run, None, &work).unwrap(), run).is_empty());
+    assert!(work.join("bin.dat").exists());
+    let _ = fs::remove_dir_all(&dir);
+  }
 
   const BEFORE: &str = "context\nold_line\ncontext2\n";
   const AFTER: &str = "context\nnew_line\nadded_line\ncontext2\n";

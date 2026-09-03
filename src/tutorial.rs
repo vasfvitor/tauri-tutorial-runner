@@ -15,8 +15,6 @@ pub struct Tutorial {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub meta: Option<serde_json::Value>,
   pub base: Base,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub harness: Option<Harness>,
   pub steps: Vec<Step>,
   #[serde(skip)]
   #[schemars(skip)]
@@ -34,53 +32,12 @@ pub struct Base {
   pub fixture: String,
 }
 
-/// A step-level harness inherits from the tutorial-level one per field:
-/// `handlers`/`plugins` replace when present, `prelude` appends — a step
-/// usually adds a command or swaps a plugin, not a fresh world.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Harness {
-  /// verbatim Rust included in generated tests (e.g. a copy of an app command)
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub prelude: Option<String>,
-  /// names passed to tauri::generate_handler![]
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub handlers: Option<Vec<String>>,
-  /// plugins registered on the mock builder: a bare crate name gets
-  /// `::init()`, an entry with a call (`crate::Builder::default().build()`)
-  /// is used verbatim
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub plugins: Option<Vec<String>>,
-}
-
-impl Harness {
-  /// Resolve the harness for an assertion phase from the step- and
-  /// tutorial-level declarations, applying the field-level inheritance the
-  /// struct doc describes.
-  pub fn resolve(step: Option<&Harness>, tutorial: Option<&Harness>) -> Option<Harness> {
-    match (step, tutorial) {
-      (None, tutorial) => tutorial.cloned(),
-      (Some(step), None) => Some(step.clone()),
-      (Some(step), Some(tutorial)) => Some(Harness {
-        prelude: match (tutorial.prelude.as_deref(), step.prelude.as_deref()) {
-          (Some(t), Some(s)) => Some(format!("{t}\n{s}")),
-          (t, s) => s.or(t).map(str::to_string),
-        },
-        handlers: step.handlers.clone().or_else(|| tutorial.handlers.clone()),
-        plugins: step.plugins.clone().or_else(|| tutorial.plugins.clone()),
-      }),
-    }
-  }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
   pub id: String,
   /// natural-language instruction — doubles as the agent-eval prompt
   pub task: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub harness: Option<Harness>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub preconditions: Vec<Assertion>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -153,8 +110,17 @@ pub struct Assertion {
 #[serde(untagged)]
 pub enum Expect {
   Keyword(ExpectKeyword),
-  Ok { ok: serde_json::Value },
-  OkContains { ok_contains: String },
+  Ok {
+    ok: serde_json::Value,
+  },
+  OkContains {
+    ok_contains: String,
+  },
+  /// the command must fail with an error carrying this substring — for
+  /// failures that are not ACL denials (a plugin scope refusal, say)
+  ErrContains {
+    err_contains: String,
+  },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
@@ -265,7 +231,7 @@ pub fn load_tutorial(dir: &Path) -> Result<Tutorial> {
         }
         if assertion.expect.is_none() {
           return Err(Error::Validate(format!(
-            "step \"{}\": {} needs expect (ok / ok_contains / denied)",
+            "step \"{}\": {} needs expect (ok / ok_contains / denied / succeeds / err_contains)",
             step.id,
             assertion.kind.as_str()
           )));

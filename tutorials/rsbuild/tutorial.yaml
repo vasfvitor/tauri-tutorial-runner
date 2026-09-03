@@ -44,13 +44,6 @@ steps:
             beforeBuildCommand: "pnpm build"
             devUrl: "http://localhost:3000"
             frontendDist: "../dist"
-    harness:
-      prelude: |
-        #[tauri::command]
-        fn greet(name: &str) -> String {
-            format!("Hello, {}! You've been greeted from Rust!", name)
-        }
-      handlers: [greet]
     assertions:
       - kind: ipc-local
         command: greet
